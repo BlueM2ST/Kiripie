@@ -1,0 +1,27 @@
+﻿# this is to define the splashscreen and initialize game GUI data
+*splashscreen
+
+# display the splashscreen
+[video storage = "audio/video/logo.ogv", skip = "false"]
+[img storage = "art/system/logoimg.jpg"]
+
+[setvar gameFinished = "false"]
+[bgimg storage = "title.png"]
+[menu jump *mainMenu]
+[bgm storage = "01.wav"]
+[print "It has gotten this far."]
+[break]
+
+*start
+
+[allsoundstop]
+[dialogue box storage = "art/system/msgframe.png", pos = "0,800", size = "1920,270"]
+[dialogue text pos = "250,60", size = "1600,220"]
+[menu jump *ingameMenu]
+
+[name="Announcement"]
+"Hello, all text would go below here." 
+
+"..." 
+
+[call reloadGame]
