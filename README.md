@@ -14,6 +14,32 @@ being simple enough to modify yourself and add the features and functionality yo
 Feel free to offer suggestions.
 
 
+# How to use it
+
+Drop the files into a Godot project, set 'mainGameStart.tscn' as the launching scene, and assign the script to its root node.
+
+All game resources will also have to be imported by Godot.
+
+The file structure for the project should look something like:
+```
+-.import
+-art
+   -bgimage
+   -fgimage
+   -image
+   -system
+-audio
+   -bgm
+   -sound
+   -video
+   -voice
+-font
+-scenario
+-scenes
+-scripts
+project.godot
+```
+
 # How it works
 
 Following in the footsteps of Kirikiri (it was actually initially designed to port Kirikiri games), 
