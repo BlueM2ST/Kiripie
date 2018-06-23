@@ -1,7 +1,8 @@
-# Kiripie Visual Novel Development Tool v0.6.1 for Godot 3.0
+# Kiripie Visual Novel Development Tool v0.6.2 for Godot 3.0
 
 Use the power of the Godot Game Engine to make and port Visual Novels.
 
+**Many bugs have been introduced in 0.6.2. Games built with it will NOT run and GUI tags were removed. Use it only for testing the tool.**
 
 # What it does
 
@@ -20,26 +21,6 @@ Drop the files into a Godot project, set 'mainGameStart.tscn' as the launching s
 
 All game resources will also have to be imported by Godot.
 
-The file structure for the project should look something like:
-```
--.import
--art
-   -bgimage
-   -fgimage
-   -image
-   -system
--audio
-   -bgm
-   -sound
-   -video
-   -voice
--font
--scenario
--scenes
--scripts
-project.godot
-```
-
 # How it works
 
 Following in the footsteps of Kirikiri (it was actually initially designed to port Kirikiri games), 
@@ -54,14 +35,15 @@ For example, a splashscreen leading to a main menu might look something like:
 *splashscreen
 
 # display the splashscreen
-[video storage = "audio/video/logo2.ogv", skip = "false"]
-[img storage = "art/system/logoimg.jpg"]
+[video storage = "logo.ogv", skipable = "false"]
+[img storage = "logoimg.jpg"]
 
 # Display the main menu
 [bgimg storage = "title.png"]
-[menu jump *mainMenu]
+# [menu jump *mainMenu] #menu tag removed in 0.6.2, will add back later
 [bgm storage = "01.wav"]
-[break]
+# [break]
+[jump *start]
 
 ```
 
@@ -88,11 +70,11 @@ Overall, it is designed so that you barely have to use the Godot Editor at all.
 - Sprite positioning, fade-in, and crossfade
 - Background fade and crossfade
 - Time-based dialogue text animation (to be replaced for v1.0)
-- Basic tag-based GUI scripting
+- Basic tag-based GUI scripting (removed in 0.6.2, to add again later)
 - Script jump and jump location tags
 - Support for background music, sound effects, voice, and ambient sounds
 - Basic localization support (will continue to be improved for v1.0)
-- Basic GUI-creation tag system
+- Basic script debugger
 
 
 # Proposed features for version 2.0
@@ -101,3 +83,4 @@ Overall, it is designed so that you barely have to use the Godot Editor at all.
 - Replacing the Godot Animation Player with a code-based solution
 - Camera zooming
 - Responsive screen resizing
+- Rewritten parser based on a more 'grammar' style approach (as opposed to a 'matching' approach)
