@@ -1,0 +1,56 @@
+@@isgrammar
+
+tag; call; @any
+tag; print; @any
+tag; set; @variable
+tag; if; @variable, @config; @variable--@config
+tag; endif; @none
+tag; img; @storage, remove; @storage--@remove
+tag; fgimg; @storage, remove, @slot, @pos; remove--@pos, *@slot
+tag; bgimg; @storage, @delay; *@storage
+tag; name; @any
+tag; se; @storage, stop
+tag; amb; @storage, stop
+tag; bgm; @storage, stop
+tag; voice; @storage
+tag; video; @storage; *@storage
+tag; dialogue; box, text, @storage, @loc, @size; box--text, box->@storage, box->@loc, @loc->@size, text->@loc
+tag; jump; @jump; *@jump
+tag; container; @id, @parent; @id->@parent, *@id
+tag; button; delall, remove, hideall, @id, @slot, @imgNormal, @imgHover, @imgPressed, @loc, @size; removeall--@id, remove->@slot, @id->@slot, @slot->@loc, @loc->@size
+tag; menu; @any
+tag; menuimg; remove, @storage; remove--@storage
+tag; instantiate; @instance, @parent; *@instance, @instance->@parent
+tag; preload; (fg|buttons|sound|video|menu), @parent
+tag; engine; @id, @version; *@id, @id->@version
+tag; game; @id, @version; *@id, @id->@version
+tag; allsoundstop; @none
+tag; sec; @none
+tag; break; @none
+tag; setfront; @none
+tag; shake; @none
+
+
+subtag; storage; storage(\s?)=(\s?)\".*(\.jpg|\.png|\.webp|\.wav|\.ogv|\.webm)\"
+subtag; slot; slot(\s?)=(\s?)\"[0-9]+\"
+subtag; pos; pos(\s?)=(\s?)\"(left|right|center)\"
+subtag; loc; loc(\s?)=(\s?)\"[0-9]+x[0-9]+\"
+subtag; skipable; skipable(\s?)=(\s?)\"(true|false)\"
+subtag; size; size(\s?)=(\s?)\"[0-9]+x[0-9]+\"
+subtag; id; id(\s?)=(\s?)\"[a-zA-Z0-9\s]+\"
+subtag; parent; parent(\s?)=(\s?)\".*\"
+subtag; imgNormal; imgNormal(\s?)=(\s?)\"\w*.(\.jpg|\.png|\.webp)\"
+subtag; imgHover; imgHover(\s?)=(\s?)\"\w*.(\.jpg|\.png|\.webp)\"
+subtag; imgPressed; imgPressed(\s?)=(\s?)\"\w*.(\.jpg|\.png|\.webp)\"
+subtag; instance; instance(\s?)=(\s?)\"\w*\"
+subtag; version; version(\s?)=(\s?)\"[a-zA-Z0-9\s\.]+\"
+subtag; variable; var(\s)\"\w*\"(\s?)=(\s?)\"\w*\"
+subtag; config; conf(\s)\"\w*\"(\s?)=(\s?)\"\w*\"
+subtag; delay; delay(\s?)=(\s?)\"[0-9]+(\.[0-9]+)?\"
+subtag; time; time(\s?)=(\s?)\"[0-9]+(\.[0-9]+)?\"
+subtag; jump; \*\w*
+subtag; any; (?<=\s).*
+subtag; none; --
+
+@@endgrammar
+

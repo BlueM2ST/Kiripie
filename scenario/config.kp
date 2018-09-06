@@ -1,0 +1,37 @@
+*config
+
+#
+# Do not modify any of these values unless you know what they are doing.
+# All games must have a file with this jump tag (*config) and these specific config tags.
+#
+# ======== base system creation ========
+[engine id = "Godot Kiripie" version = "0.9.0"]
+
+[game id = "Dev" version = "0.0.0"]
+
+# ===these tags create the GUI slots and other GUI/container elements===
+
+# This is the main node
+[container id = "MainGame" parent = "MainNode"]
+
+# These container tags can be somewhat changed based on the game
+[container id = "BgLayer" parent = "MainGame"]
+[container id = "CharacterLayer" parent = "MainGame"]
+[container id = "DialogueLayer" parent = "MainGame"]
+[container id = "OptionsLayer" parent = "MainGame"]
+[container id = "ButtonLayer" parent = "MainGame"]
+
+# preloads are hard-coded tags
+[preload fg]
+[preload buttons]
+[preload sound]
+[preload video]
+[preload menu]
+
+[instantiate instance = "BgImage", parent = "MainGame/BgLayer"]
+[instantiate instance = "Dialogue" parent = "MainGame/DialogueLayer"]
+
+# don't delete this
+[menu @@Init]
+
+[jump *splashscreen]

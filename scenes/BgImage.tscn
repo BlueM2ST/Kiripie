@@ -19,7 +19,7 @@ tracks/0/keys = {
 "values": [ Color( 1, 1, 1, 1 ), Color( 1, 1, 1, 0 ) ]
 }
 
-[node name="BgImage" type="Node2D"]
+[node name="BgImage" type="Node2D" index="0"]
 
 z_index = 1
 z_as_relative = false
@@ -70,5 +70,6 @@ playback_default_blend_time = 0.0
 playback_speed = 1.0
 anims/fade = SubResource( 1 )
 blend_times = [  ]
+_sections_unfolded = [ "Pause", "Playback Options" ]
 
 

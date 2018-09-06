@@ -1,0 +1,70 @@
+*menu
+
+@@Init
+[button delall]
+[button id = "##ClickButton", slot = "0", loc = "0x0", size = "1920x1080", imgNormal = "TP.png", imgHover = "TP.png"]
+
+@@MainMenu
+[button delall]
+[button id = "##ClickButton", slot = "0", loc = "0x0", size = "1920x1080", imgNormal = "TP.png", imgHover = "TP.png"]
+[button id = "##StartButton", slot = "1", loc = "1500x500", size = "300x100", imgNormal = "start_n.png", imgHover = "start_o.png"]
+[button id = "##ConfigButton", slot = "2", loc = "1500x650", size = "300x100", imgNormal = "config_n.png", imgHover = "config_o.png"]
+[button id = "##LoadButton", slot = "3", loc = "1500x800", size = "300x100", imgNormal = "load_n.png", imgHover = "load_o.png"]
+[if conf "finishedGame" = "true"]
+[button id = "##ExtraButton", slot = "4", loc = "1500x950", size = "300x100", imgNormal = "exit_n.png", imgHover = "exit_o.png"]
+[endif]
+[button id = "##ExitButton", slot = "4", loc = "1500x950", size = "300x100", imgNormal = "exit_n.png", imgHover = "exit_o.png"]
+
+@@InGameMenu
+[button delall]
+[button id = "##ClickButton", slot = "0", loc = "0x0", size = "1920x1080", imgNormal = "TP.png", imgHover = "TP.png"]
+[button id = "##SaveButton", slot = "1", loc = "1250x990", size = "120x40", imgNormal = "save_o.png", imgHover = "save_n.png"]
+[button id = "##LoadButton", slot = "2", loc = "1350x990", size = "120x40", imgNormal = "load_gm_o.png", imgHover = "load_gm_n.png"]
+[button id = "##AutoButton", slot = "3", loc = "1450x990", size = "120x40", imgNormal = "auto_o.png", imgHover = "auto_n.png"]
+[button id = "##ConfigButton", slot = "4", loc = "1550x990", size = "100x30", imgNormal = "config_o.png", imgHover = "config_n.png"]
+[button id = "##SkipButton", slot = "5", loc = "1650x990", size = "100x30", imgNormal = "exit_n.png", imgHover = "exit_o.png"]
+
+@@ConfigMenu
+[button delall]
+[setfront]
+[if conf "language" = "en"]
+[menuimg storage = "sys_windows_01a_en.png"]
+[endif]
+[if conf "language" = "ch"]
+[menuimg storage = "sys_windows_01a.png"]
+[endif]
+[button id = "##ToggleFullscreenButton", slot = "2", loc = "800x400", size = "56x56", imgNormal = "select_no.png", imgHover = "select_yes.png", imgPressed = "select_yes.png"]
+[button id = "##ToggleWindowedButton", slot = "3", loc = "900x400", size = "56x56", imgNormal = "select_no.png", imgHover = "select_yes.png", imgPressed = "select_yes.png"]
+[button id = "##ToggleLanguageButton_en", slot = "4", loc = "800x700", size = "56x56", imgNormal = "select_no.png", imgHover = "select_yes.png", imgPressed = "select_yes.png"]
+[button id = "##ToggleLanguageButton_ch", slot = "5", loc = "900x700", size = "56x56", imgNormal = "select_no.png", imgHover = "select_yes.png", imgPressed = "select_yes.png"]
+[button id = "##ExitMenuButton", slot = "10", loc = "1500x890", size = "128x41", imgNormal = "save_back_normal.png", imgHover = "save_back_over.png"]
+[button id = "##ExitButton", slot = "11", loc = "150x890", size = "60x80", imgNormal = "game_exit_1.png", imgHover = "game_exit_2.png"]
+
+@@SaveMenu
+[button delall]
+[setfront]
+[menuimg storage = "sys_windows_01a.png"]
+[button id = "##ExitMenuButton", slot = "10", loc = "1500x890", size = "128x41", imgNormal = "save_back_normal.png", imgHover = "save_back_over.png"]
+[button id = "##ExitButton", slot = "11", loc = "150x890", size = "60x80", imgNormal = "game_exit_1.png", imgHover = "game_exit_2.png"]
+[button id = "##SaveGameButton", slot = "1", loc = "200x240", size = "450x300"]
+[button id = "##SaveGameButton", slot = "2", loc = "740x240", size = "450x300"]
+[button id = "##SaveGameButton", slot = "3", loc = "1280x240", size = "450x300"]
+[button id = "##SaveGameButton", slot = "4", loc = "200x580", size = "450x300"]
+[button id = "##SaveGameButton", slot = "5", loc = "740x580", size = "450x300"]
+[button id = "##SaveGameButton", slot = "6", loc = "1280x580", size = "450x300"]
+
+@@LoadMenu
+[button delall]
+[setfront]
+[menuimg storage = "load_template.png"]
+[button id = "##ExitMenuButton", slot = "10", loc = "1500x890", size = "128x41", imgNormal = "save_back_normal.png", imgHover = "save_back_over.png"]
+[button id = "##ExitButton", slot = "11", loc = "150x890", size = "60x80", imgNormal = "game_exit_1.png", imgHover = "game_exit_2.png"]
+[button id = "##LoadGameButton", slot = "1", loc = "200x240", size = "450x300"]
+[button id = "##LoadGameButton", slot = "2", loc = "740x240", size = "450x300"]
+[button id = "##LoadGameButton", slot = "3", loc = "1280x240", size = "450x300"]
+[button id = "##LoadGameButton", slot = "4", loc = "200x580", size = "450x300"]
+[button id = "##LoadGameButton", slot = "5", loc = "740x580", size = "450x300"]
+[button id = "##LoadGameButton", slot = "6", loc = "1280x580", size = "450x300"]
+
+@@VoiceMenu
+[setfront]
