@@ -1,35 +1,58 @@
 extends Node2D
 
+# for loading data from files
 var gameScenario = {}
-var config = []
-var dialogueFile
 var grammarTag = {}
 var grammarRules = {}
 var grammarSubtag = {}
 var allGameFiles = {}
+var buttonScript = {}
+var languages = {}
 
-# for saving the game
+# The encryption key for save files. You can set it to any string
+var encryptionKey = '@theVeryLeast#SlackenTheMaize'
 
-# instead of saving the files that should be reloaded, reload the scene
-#    from the sections and jumps. Display the images and text that would
-#    show up at that point at the saved line.
-# other things to save are the script variables, which are stored below.
-# TODO: add section system for easier/quicker lookup
-var saveLine = 0
-var saveCharName = ''
-var saveBGImage = ''
-var save = ''
+# if releasing/building the game in debug, it should be reading from the *.pck file, not the original files
+var debugRelease = false
 
-# for loading from save file and testing
-var canLoad = false
-var isFirstPlay = true
-var startLine = 0
-var currentLine = 0
-var currentJump = ''
+# enabling the debugger will decrease performance, but give more insight into the tags used in the *.kp files
+# disable this if you are releasing/building the game
+# TODO: this will actually not work how it is currently, since it is based on the old script loading system.
+#       Please do not enable this. If you typed a tag incorrectly, 
+#       Godot will most likely crash, so that can be the warning until I get this working again.
+var enableDebugger = false
+
+# for skip mode
+var inSkipMode = false
+# the text should display much faster if in skip mode
+var skipTextSpeed = 0.009
+var inAutoMode = false
+
+# for laoding
+var loadingSave = false
+var forceLoad = false
+
+# for testing
+# TODO: add these to OS.set_window_title(), since they don't do anything anymore
 var engineVersion = ''
 var engineName = ''
 var gameName = ''
 var gameVersion = ''
+
+# for saving the game
+# TODO: rename these for better readability
+var savePage = 1
+var configSave = {'fullscreen': false, 'canLoad': true, 'autoSkip': false, 'textSpeed': 0.0007, 'language': 'en', 'autoSpeed': 7,
+				'farthestProgress': [0, '*config'], 'extraCondition': '', 'finishedGame': 'false'}
+
+var saveOptions = {'jump': '*config', 'line': 0, 'fgImages': {}, 'bgImage': '', 
+					'menu': '', 'scriptVariables': {}, 'charName': '\n', 'currentLine': 0, 'currentDialogue': '',
+					'dialogueBoxImage': '', 'dialogueBoxSize': ''}
+					
+var subtagStorage = {'mainTag': '', 'variableName': '', 'variableValue': '', 'storage': '', 
+	'slot': '', 'pos': '', 'id': '', 'delay': '', 'sizeX': '', 
+	'sizeY': '', 'parent': '', 'imgNormal': '', 'imgHover': '', 'instance': '', 'version': '',
+	'locX': '', 'locY': '', 'imgPressed': '', 'wildcard': '', 'generic': ''}
 
 # signals
 signal vnDialogueNext
@@ -37,47 +60,49 @@ signal initLoadDone
 signal dialogueEnd
 
 # threads
+# TODO: check this thread
 onready var loadingThread = Thread.new()
-onready var dialogueThread = Thread.new()
-
-onready var showCurrentLine = $ShowCurrentLine
 
 onready var cancelDialogueAnimation = false
+onready var nextDialogue = false
+onready var setSignal = false
 onready var inMenu = false
 
 func _ready():
+	# set viewport to the camera
+	$MainCamera.make_current ( )
+	# load initial data
 	loadingThread.start(self, "loadData")
 	yield(self,"initLoadDone")
 	# on starting that game, go to the config jump location to initialize the system
 	mainParserLoop('*config')
-
+	
+func _process(delta):
+	OS.set_window_title("Koi Musibi Demo, Beta Build | fps: " + str(Engine.get_frames_per_second()) + ' | jump: ' + saveOptions['jump'] + ' | line: ' + str(saveOptions['currentLine']))
+	if setSignal == true:
+		emit_signal("vnDialogueNext")
+		setSignal = false
 
 func _input(event):
 	# only check for input if there is no menu to be displayed and the game is not 'paused'
 	if inMenu == false:
-		# next text if enter keys or left click
-		if event is InputEventMouseButton and event.button_index == BUTTON_LEFT and event.pressed:
-			if cancelDialogueAnimation == false:
-				cancelDialogueAnimation = true
-			else:
-				emit_signal("vnDialogueNext")
-				
 		if event is InputEventKey and (event.scancode == KEY_ENTER or event.scancode == KEY_KP_ENTER) and event.pressed:
-			if cancelDialogueAnimation == false:
-				cancelDialogueAnimation = true
+			# pressing enter will take the game out of auto mode or skip mode
+			if inAutoMode or inSkipMode:
+				if inAutoMode:
+					inAutoMode = false
+				else:
+					inSkipMode = false
 			else:
-				emit_signal("vnDialogueNext")
-				
-		else:
-			pass
+				if cancelDialogueAnimation == false:
+					cancelDialogueAnimation = true
+				else:
+					emit_signal("vnDialogueNext")
 
 
 # =============================== parsing =====================================================
 var loadingDone = false
 var isBreak = false
-
-# enable bebugger only if you are testing. Disable it for release
-var enableDebugger = true
 
 # check which background layer is showing; a or b
 var bgLayerIsA = true
@@ -86,36 +111,37 @@ var diaAnimIsPlaying = false
 # if the script should wait for an [endif]
 var ifTrue = false
 var inIf = false
-var charName = ''
-var scriptVariables = {}  # when a variable is set in the script, it is stored in this dictionary
 var fgSlots = {}  # tracks the shown image of a sprite. For crossfade
-func mainParserLoop(jumpStart, startLine=0):
+func mainParserLoop(jumpStart, startLine=0, loadingFromSaveFile = false):
 	
-	# for now will always start at the beginning
-	saveGame(true)
-	currentJump = jumpStart
-	var foundJumpStart = false
-	currentLine = 0
+	saveOptions['jump'] = jumpStart
+	saveOptions['currentLine'] = 0
 	
 	# start the loop
 	for value in gameScenario[jumpStart]:
 		
+		# when loading a game, end this function and make a new one
+		# TODO: when building, it will make a new mainParserLoop() function, but not end the old one
+		#       However, in the editor it will work fine. 
+		#       --> Make a new function to call this one, and end and start this loop
+		if forceLoad:
+			forceLoad = false
+			return mainParserLoop(saveOptions['jump'])
+			
+		# line counting
+		saveOptions['currentLine'] += 1
 		
-		# line counting actually works now
-		currentLine += 1
+		# make sure the load gets to the correct line, don't overwrite the saved value
+		if not loadingSave:
+			saveOptions['line'] = saveOptions['currentLine']
 		
+		# TODO: maybe use something like this for loading
 		if isBreak == true:
 			isBreak = false
 			return
+		# don't read comments
 		if value.begins_with('#') or value == '':
 			continue
-		# currently, the parser will loop through the lines in the file until it finds the jump location
-		if not foundJumpStart:
-			if not jumpStart in value:
-				continue
-			else:
-				foundJumpStart = true
-				continue
 		if '[endif]' in value:
 			inIf = false
 			ifTrue = false
@@ -125,33 +151,59 @@ func mainParserLoop(jumpStart, startLine=0):
 			if ifTrue == false:
 				continue
 		if value.begins_with('*'):
-			# this functionality might not be desired in the long-term
-			# It might be better to force a jump tag before every jump location tag
-			# even if the script would continue onto the next jump location
 			continue
 		
 		# check if the line is a tag
 		if value.begins_with("["):
 			cancelDialogueAnimation = true
-			var result = debugger(value)
 			# for a release of the game, remove the debugger:
-			# var result = value
-			if 'error' in result:
-				continue
-			else:
-				var clickToContinue = parser(result)
-				if clickToContinue == true:
-					pass
-				else:
+			if enableDebugger:
+				var result = debugger(value)
+				if result == 'error':
 					continue
+			# TODO: maybe call the parser from the lexer?
+			lexer(value)
+			var clickToContinue = parser()
+			subtagClear()
+			if str(clickToContinue) == 'pass':
+				pass
+			else:
+				continue
+		# if loading a save, don't display the dialogue until the saved line is found
+		if loadingSave:
+			if saveOptions['line'] == saveOptions['currentLine']:
+				loadingSave = false
+				pass
+			else:
+				saveOptions['charName'] = '\n'
+				continue
+		
 		cancelDialogueAnimation = false
-		var dialogueToShow = charName + value
-		showCurrentLine.set_text(engineName + '  :  ' + engineVersion + '  :  ' + gameName + '  :  ' + gameVersion + '  :  ' + currentJump + '  :  ' + str(currentLine))
+		
+		# for localization support
+		if value.begins_with('%'):
+			# make sure it's valid
+			if value in languages[configSave['language']]['dialogue']:
+				value = languages[configSave['language']]['dialogue'][value]
+		
+		saveOptions['currentDialogue'] = value
+		var dialogueToShow = saveOptions['charName'] + value
 		# reset the name value since not all text lines will have a name
-		charName = ''
+		saveOptions['charName'] = '\n'
 		# wait for a mouse click, enter key, etc.
 		dialogue(dialogueToShow)
-		yield(self, "vnDialogueNext")
+		# in auto mode, there is no need to wait for user input.
+		# It just waits a few seconds after the dialoge is displayed before continuing.
+		# TODO: auto mode doesn't work very well yet: it doesn't wait for the text to be finished showing
+		if inAutoMode or inSkipMode:
+			if inSkipMode:
+				$AutoTimer.wait_time = 0.1
+			else:
+				$AutoTimer.wait_time = configSave['autoSpeed']
+			$AutoTimer.start()
+			yield($AutoTimer, "timeout")
+		else:
+			yield(self, "vnDialogueNext")
 		cancelDialogueAnimation = false
 		get_node("VoicePlayer").stop()
 		get_node("VideoPlayer").stop()
@@ -159,45 +211,54 @@ func mainParserLoop(jumpStart, startLine=0):
 		continue
 
 
+# displaying dialogue in the textbox.
+# TODO: this is the main cause of fps drops (30 -> ~15 sometimes)
+#       Maybe this function doesn't return properly when the next dialogue line is playing,
+#       resulting in two or more instances running.
 func dialogue(dialogue):
 	var currentDialogue = ''
-	$Timer.wait_time = 0.001
-	for value in dialogue:
-		currentDialogue = currentDialogue + value
-		$Timer.start()
-		yield($Timer, "timeout")
-		if cancelDialogueAnimation == true:
-			get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue").set_text(dialogue)
-			return
-		else:
-			get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue").set_text(currentDialogue)
-			continue
+	if not inSkipMode:
+		$Timer.wait_time = configSave['textSpeed']
+		for value in dialogue:
+			currentDialogue = currentDialogue + value
+			$Timer.start()
+			yield($Timer, "timeout")
+			if cancelDialogueAnimation == true:
+				get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue").set_text(dialogue)
+				return
+			else:
+				get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue").set_text(currentDialogue)
+				continue
+	else:
+		get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue").set_text(dialogue)
+		return
 	cancelDialogueAnimation = true
 	return
 
 
+# TODO: fix the debugger for the current version
 func debugger(tag):
 	var regex = RegEx.new()
-	var checkedtags = []
 	var mainTag = ''
 	var foundNoValidSubtags = true
-	var hasInvalidSubtag = false
 	var usedSubtags = []
-	var errorReturn = ['error']
+	var errorReturn = 'error'
 	
 	# remove the opening and closing square brackets, they are only used to tell the parser that this is a tag
-	tag = tag.replace('[', '').replace(']', '')
+	# also replace spaces around the equals sign, as it's not needed
+	tag = tag.replace('[', '').replace(']', '').replace(' = ', '=')
 	
+	# subtags are split by a space character
 	if ' ' in tag:
-		mainTag = tag.split(' ')[0]
+		var splitTag = tag.split(' ')
+		mainTag = splitTag[0]
+	# if there is no space character in the tag, then it must have no subtags
 	else:
 		mainTag = tag
+		
 	if not mainTag in grammarTag:
-		print('ERROR: tag <'+mainTag+'> does not exist on line ' + str(currentLine))
+		print('ERROR: tag <'+mainTag+'> does not exist on line ' + str(saveOptions['currentLine']))
 		return errorReturn
-	checkedtags.append(mainTag)
-	
-	var thisTagsGrammarList = grammarTag[mainTag]
 	
 	for expression in grammarTag[mainTag]:
 		var thisSubtag = expression
@@ -219,271 +280,214 @@ func debugger(tag):
 		# if the regex could not match anything
 		if regex.search(tag) == null:
 			continue
-		# only pass valid tags to the parser
-		checkedtags.append(regex.search(tag).get_string())
 		foundNoValidSubtags = false
 		usedSubtags.append(thisSubtag)
 		continue
 	if foundNoValidSubtags:
-		print('ERROR: no valid subtags found for tag <' +mainTag+ '> on line '+str(currentLine)+' , skipping tag')
+		print('ERROR: no valid subtags found for tag <' +mainTag+ '> on line '+str(saveOptions['currentLine'])+' , skipping tag')
 		return errorReturn
 	
-	# if debugger is enabled, it will check for additional error info
-	if enableDebugger == true:
-		# check if the tag has rules for the use of its subtags
-		if not null in grammarRules[mainTag]:
-			for ruleTag in grammarRules[mainTag]:
-				if '*' in ruleTag:
-					var requiredSubtag = ruleTag.split('*')
-					if not requiredSubtag[1] in usedSubtags:
-						print("ERROR: must use subtag <"+requiredSubtag[1]+"> for tag <"+mainTag+"> on line "+str(currentLine))
+	# check if the tag has rules for the use of its subtags
+	if not null in grammarRules[mainTag]:
+		for ruleTag in grammarRules[mainTag]:
+			if '*' in ruleTag:
+				var requiredSubtag = ruleTag.split('*')
+				if not requiredSubtag[1] in usedSubtags:
+					print("ERROR: must use subtag <"+requiredSubtag[1]+"> for tag <"+mainTag+"> on line "+str(saveOptions['currentLine']))
+					return errorReturn
+			if '--' in ruleTag:
+				var unusableTogether = ruleTag.split('--')
+				if unusableTogether[0] in usedSubtags and unusableTogether[1] in usedSubtags:
+					print("ERROR: cannot use both subtags <"+unusableTogether[0]+"> and <"+unusableTogether[1]+ "> for tag <"+mainTag+"> on line "+str(saveOptions['currentLine']))
+					return errorReturn
+			if '->' in ruleTag:
+				var subtagRequire = ruleTag.split('->')
+				if subtagRequire[0] in usedSubtags:
+					if not subtagRequire[1] in usedSubtags:
+						print("ERROR: to use subtag <"+subtagRequire[0]+"> you must also use subtag <"+subtagRequire[1]+"> for tag <"+mainTag+"> on line "+str(saveOptions['currentLine']))
 						return errorReturn
-				if '--' in ruleTag:
-					var unusableTogether = ruleTag.split('--')
-					if unusableTogether[0] in usedSubtags and unusableTogether[1] in usedSubtags:
-						print("ERROR: cannot use both subtags <"+unusableTogether[0]+"> and <"+unusableTogether[1]+ "> for tag <"+mainTag+"> on line "+str(currentLine))
-						return errorReturn
-				if '->' in ruleTag:
-					var subtagRequire = ruleTag.split('->')
-					if subtagRequire[0] in usedSubtags:
-						if not subtagRequire[1] in usedSubtags:
-							print("ERROR: to use subtag <"+subtagRequire[0]+"> you must also use subtag <"+subtagRequire[1]+"> for tag <"+mainTag+"> on line "+str(currentLine))
-							return errorReturn
-		# this will be for single subtag tags. The single tag should be required by default
-		else:
-			pass
+	# this will be for single subtag tags. The single tag should be required by default
+	else:
+		pass
 	
-	return checkedtags
+	return
 
+
+# reads the tag and adds the data to a dictionary for the parser to read
+func lexer(tag):
+	var modifiedTag = tag.replace('[', '').replace(']', '')
 	
-func parser(validTags):
-	# print(validTags) # for debug
-	
-	# maybe set these as a dictionary instead of variables?
-	var subtagDict = {p_variableName = '', p_variableValue = '', p_jump = '', p_source = '', p_storage = '', 
-	p_slot = '', p_pos = '', p_id = '', p_delay = '', p_time = '', p_skippable = '', p_sizeX = '', 
-	p_sizeY = '', p_parent = '', p_imgNormal = '', p_imgHover = '', p_instance = '', p_version = '',
-	p_locX = '', p_locY = '', p_any = ''}
-	var p_variableName
-	var p_variableValue
-	var p_jump
-	var p_source
-	var p_storage
-	var p_slot
-	var p_pos
-	var p_id
-	var p_delay
-	var p_time
-	var p_skipable
-	var p_sizeX
-	var p_sizeY
-	var p_parent
-	var p_imgNormal
-	var p_imgHover
-	var p_instance
-	var p_version
-	var p_locX
-	var p_locY
-	var p_any
-	
-	var skippedMainTag = false
-	for subtag in validTags:
-		# preload is special; bandage solution
-		if 'preload' in validTags[0]:
-			if 'parent' in validTags:
-				p_parent = subtag.split('\"')[1]
-				subtagDict[p_parent] = p_parent
-			break
-		# skip over the main tag, this is only for subtags
-		if skippedMainTag == false:
-			skippedMainTag = true
-			continue
-			
-		if 'var ' in subtag and '=' in subtag:
-			subtag = subtag.split('var')[1]
-			p_variableName = subtag.split('=')[0]
-			p_variableValue = subtag.split('=')[1]
-			subtagDict[p_variableName] = p_variableName
-			subtagDict[p_variableValue] = p_variableValue
-			continue
-		if '*' in subtag:
-			p_jump = subtag
-			continue
-		if 'source' in subtag and '=' in subtag:
-			p_source = subtag.split('=')[1]
-			subtagDict[p_source] = p_source
-			continue
-		
-		var subtagValue = ''
-		if '\"' in subtag:
-			subtagValue = subtag.split('\"')[1]
-		
-		if 'storage' in subtag:
-			p_storage = subtagValue
-			# some debugging here
-			if not p_storage in allGameFiles:
-				print('ERROR: could not find storage location \"'+p_storage+'\"')
-				return
-			p_storage = allGameFiles[p_storage][0]
-			subtagDict[p_storage] = p_storage
-			continue
-		if 'slot' in subtag:
-			p_slot = subtagValue
-			subtagDict[p_slot] = p_slot
-			continue
-		if 'pos' in subtag:
-			p_pos = subtagValue
-			subtagDict[p_pos] = p_pos
-			continue
-		if 'skipable' in subtag:
-			p_skipable = subtagValue
-			subtagDict[p_skipable] = p_skipable
-			continue
-		if 'delay' in subtag or 'time' in subtag:
-			p_delay = subtagValue
-			p_time = subtagValue
-			subtagDict[p_delay] = p_delay
-			subtagDict[p_time] = p_time
-			continue
-		if 'size' in subtag:
-			p_sizeX = subtagValue.split('x')[0]
-			p_sizeY = subtagValue.split('x')[1]
-			subtagDict[p_sizeX] = p_sizeX
-			subtagDict[p_sizeY] = p_sizeY
-			continue
-		if 'id' in subtag and '=' in subtag:
-			p_id = subtagValue
-			subtagDict[p_id] = p_id
-			continue
-		if 'parent' in subtag and '=' in subtag:
-			p_parent = subtagValue
-			subtagDict[p_parent] = p_parent
-			continue
-		if 'imgNormal' in subtag and '=' in subtag:
-			p_imgNormal = subtagValue
-			if not p_imgNormal in allGameFiles:
-				print('ERROR: could not find storage location \"'+p_imgNormal+'\"')
-				return
-			p_imgNormal = allGameFiles[p_imgNormal][0]
-			subtagDict[p_imgNormal] = p_imgNormal
-			continue
-		if 'imgHover' in subtag and '=' in subtag:
-			p_imgHover = subtagValue
-			if not p_imgHover in allGameFiles:
-				print('ERROR: could not find storage location \"'+p_imgHover+'\"')
-				return
-			p_imgHover = allGameFiles[p_imgHover][0]
-			subtagDict[p_imgHover] = p_imgHover
-			continue
-		if 'instance' in subtag and '=' in subtag:
-			p_instance = subtagValue
-			subtagDict[p_instance] = p_instance
-			continue
-		if 'version' in subtag and '=' in subtag:
-			p_version = subtagValue
-			subtagDict[p_version] = p_version
-			continue
-		if 'loc' in subtag and '=' in subtag:
-			p_locX = subtagValue.split('x')[0]
-			p_locY = subtagValue.split('x')[1]
-			subtagDict[p_locX] = p_locX
-			subtagDict[p_locY] = p_locY
-			continue
-		# else
-		p_any = subtag.replace(' ', '')
-		subtagDict[p_any] = p_any
-	
-	if 'call' in validTags[0]:
-		if 'reloadSystem' in p_any:
-			return get_tree().reload_current_scene()
-		if 'reloadGame' in p_any:
-			mainParserLoop('*splashscreen')
-		if 'menuParser' in p_any:
-			return menuParser( p_any.split(' ')[2])
+	# if there is no space character in the tag, then it must have no subtags
+	if not ' ' in modifiedTag:
+		# set it as the main tag, then send it directly to the parser
+		subtagStorage['mainTag'] = modifiedTag
 		return
+		
+	var splitTag = modifiedTag.split(' ')
+	subtagStorage['mainTag'] = splitTag[0]
+	var isMainTag = true
+	for subtag in splitTag:
+		if isMainTag:
+			isMainTag = false
+			continue
+		# handles the 'remove' in tags like [fgimg remove slot = "1"] and the name in [name SomeName]
+		# also handles variable 'if' and 'set'
+		if not '=' in subtag:
+			subtagStorage['wildcard'] = subtag
+			if 'var' in subtag or 'conf' in subtag:
+				var variableTag = splitTag[2].split('=')
+				subtagStorage['variableName'] = variableTag[0]
+				subtagStorage['variableValue'] = variableTag[1]
+				return
+			if not '=' in tag:
+				return
+			continue
+		var subtagName = subtag.split('=')[0]
+		var subtagValue = subtag.split('=')[1]
+		# matching all subtags and assigning their values
+		match subtagName:
+			'storage': 
+				subtagValue = allGameFiles[subtagValue]
+				subtagStorage['storage'] = subtagValue
+			'id': 
+				subtagStorage['id'] = subtagValue
+			'slot':
+				subtagStorage['slot'] = subtagValue
+			'pos':
+				subtagStorage['pos'] = subtagValue
+			'loc':
+				subtagValue = subtagValue.split('x')
+				subtagStorage['locX'] = subtagValue[0]
+				subtagStorage['locY'] = subtagValue[1]
+			'size':
+				subtagValue = subtagValue.split('x')
+				subtagStorage['sizeX'] = subtagValue[0]
+				subtagStorage['sizeY'] = subtagValue[1]
+			'imgNormal':
+				subtagValue = allGameFiles[subtagValue]
+				subtagStorage['imgNormal'] = subtagValue
+			'imgHover':
+				subtagValue = allGameFiles[subtagValue]
+				subtagStorage['imgHover'] = subtagValue
+			'imgPressed':
+				subtagValue = allGameFiles[subtagValue]
+				subtagStorage['imgPressed'] = subtagValue
+			'delay':
+				subtagStorage['delay'] = subtagValue
+			'parent':
+				subtagStorage['parent'] = subtagValue
+			'instance':
+				subtagStorage['instance'] = subtagValue
+			_:
+				subtagStorage['generic'] = subtagValue
+	
+	return
+
+
+# clears all values of the subtag storage dictionary
+func subtagClear():
+	for value in subtagStorage:
+		subtagStorage[value] = ''
+		
+
+# a function to shake the camera
+func shakeScreen():
+	if loadingSave:
+		return
+	# the amount of shake wanted
+	var shakeAmount = 20
+	# how fast to shake the screen
+	$ExtraTimer.wait_time = 0.0007
+	# move the screen this many times
+	for shake in range(30):
+		$ExtraTimer.start()
+		yield($Timer, "timeout")
+		$MainCamera.set_offset(Vector2(rand_range(-1.0, 1.0) * shakeAmount, rand_range(-1.0, 1.0) * shakeAmount))
+	# reset the camera
+	$MainCamera.set_offset(Vector2(0, 0))
+
+
+# The parser for all non-menu tags
+# TODO: see if it can be made more efficient (although it's not too bad now)
+func parser():
+	
+	var mainTag = subtagStorage['mainTag']
+	
+	if mainTag == 'call':
+		# 'reloadsystem' doesn't work currently, use 'reloadgame'
+		if 'reloadSystem' in subtagStorage['wildcard']:
+			return get_tree().reload_current_scene()
+		elif 'reloadGame' in subtagStorage['wildcard']:
+			return mainParserLoop('*splashscreen')
 	
 	# Print text from the game script in the game's console
-	if 'print' in validTags[0]:
-		print('DEBUG:  ' +  p_any)
-		return
+	# do not use a space when writing the output in the script!
+	elif mainTag == 'print':
+		print('DEBUG:  ' +  subtagStorage['wildcard'])
 		
-	if 'menu' in validTags[0]:
-		print(validTags[2].split(' ')[1])
-		menuParser(validTags[2].split(' ')[1], validTags, subtagDict)
-		return
+	elif mainTag == 'menu':
+		saveOptions['menu'] = subtagStorage['wildcard']
+		return menuParser(subtagStorage['wildcard'])
 	
 	# to set a variable from the script
-	if 'set' in validTags[0]:
-		scriptVariables[p_variableName] = p_variableValue
-		return
+	elif mainTag == 'set':
+		saveOptions[subtagStorage['variableName']] = subtagStorage['variableValue']
+		
+	elif mainTag == 'shake':
+		return shakeScreen()
 	
-	if 'if' in validTags[0]:
+	elif mainTag == 'if':
 		inIf = true
-		if 'var' in validTags:
+		if subtagStorage['wildcard'] == 'var':
 			# if the condition is met
-			if scriptVariables[p_variableName] == p_variableValue:
+			if saveOptions[subtagStorage['variableName']] == subtagStorage['variableValue']:
 				ifTrue = true
-			else:
-				pass
-		else:
-			pass
-		return
 	
 	# 'img' and 'bgimg' are very similar. In fact, they are using the same nodes
 	# But 'img' will replace the background image *and* hides the dialogue box
 	# if showing and hiding the dialogue box becomes a tag, this might not be needed
 	# Instead, it can be for images that go overtop the entire scene
-	if validTags[0] == 'img':
+	elif mainTag == 'img':
 		get_node("MainGame/DialogueLayer").hide()
-		get_node("MainGame/BgLayer/BgImage/BgImage_a").texture = load(p_storage)
-		return true
-		
-	if 'delay' in validTags[0]:
-#		$Timer.wait_time = float(p_time)
-#		$Timer.start()
-#		yield($Timer, "timeout")
-		return
+		get_node("MainGame/BgLayer/BgImage/BgImage_a").texture = load(subtagStorage['storage'])
+		return 'pass'
 	
 	# This is for sprites
 	# this handles everything to do with basic sprites
-	if 'fgimg' in validTags[0]:
+	elif mainTag == 'fgimg':
 		# remove the image from a given slot
-		if 'remove' in validTags:
-			get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % p_slot).texture = null
-			get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % p_slot).texture = null
+		if subtagStorage['wildcard'] == 'remove':
+			get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % subtagStorage['slot']).texture = null
+			get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % subtagStorage['slot']).texture = null
 			return
-		var havePos = false
-		if 'pos' in validTags:
-			havePos = true
-		get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % p_slot).playback_speed = 2
+		get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % subtagStorage['slot']).playback_speed = 2
+		
 		# assign the position of the sprite slot
-		if havePos == true:
-			match p_pos:
-				'right':
-					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % p_slot).rect_position = Vector2(450, 0)
-					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % p_slot).rect_position = Vector2(450, 0)
-				'left':
-					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % p_slot).rect_position = Vector2(-450, 0)
-					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % p_slot).rect_position = Vector2(-450, 0)
-				'center':
-					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % p_slot).rect_position = Vector2(0, 0)
-					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % p_slot).rect_position = Vector2(0, 0)
+		match subtagStorage['pos']:
+			'right':
+				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % subtagStorage['slot']).rect_position = Vector2(450, 0)
+				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % subtagStorage['slot']).rect_position = Vector2(450, 0)
+			'left':
+				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % subtagStorage['slot']).rect_position = Vector2(-450, 0)
+				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % subtagStorage['slot']).rect_position = Vector2(-450, 0)
+			'center':
+				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % subtagStorage['slot']).rect_position = Vector2(0, 0)
+				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % subtagStorage['slot']).rect_position = Vector2(0, 0)
 		# Every sprite slot has its ID assigned by its name
 		# Every slot also has a 'background' and 'foreground' layer where only the foreground of the sprite is shown
 		# This is done for crossfade animations
-		if fgSlots['Sprite%s' % p_slot]:
-			get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % p_slot).texture = load(p_storage)
-			get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % p_slot).play("crossfade")
-			fgSlots['Sprite%s' % p_slot] = false
+		if fgSlots['Sprite%s' % subtagStorage['slot']]:
+			get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % subtagStorage['slot']).texture = load(subtagStorage['storage'])
+			get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % subtagStorage['slot']).play("crossfade")
+			fgSlots['Sprite%s' % subtagStorage['slot']] = false
 		else:
-			get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % p_slot).texture = load(p_storage)
-			get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % p_slot).play_backwards("crossfade")
-			fgSlots['Sprite%s' % p_slot] = true
-		return
+			get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % subtagStorage['slot']).texture = load(subtagStorage['storage'])
+			get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % subtagStorage['slot']).play_backwards("crossfade")
+			fgSlots['Sprite%s' % subtagStorage['slot']] = true
 		
 	# Works similarly to the fgimg slots for crossfade, but is simpler since there is nothing
 	#    behind the bgimage and there is only one background
-	if 'bgimg' in validTags[0]:
+	elif mainTag == 'bgimg':
 		
 		### keep this for bug fixing; it checks for childen of a node
 #		for N in self.get_children():
@@ -493,91 +497,99 @@ func parser(validTags):
 #			else:
 #				# Do something
 #				print("- "+N.get_name())
+
+		# save the current background
+		saveOptions['bgimage'] = subtagStorage['storage']
 		
 		# Background will always fade, even without 'fadein'
 		# I don't think there is any reason for background images to not fade, but it is easy to add in here
 		
-		#if 'fadein' in value:
 		if bgLayerIsA:
-			get_node("MainGame/BgLayer/BgImage/BgImage_b").texture = load(p_storage)
-			if p_delay:
-				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = float(p_delay)
+			get_node("MainGame/BgLayer/BgImage/BgImage_b").texture = load(subtagStorage['storage'])
+			if subtagStorage['delay']:
+				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = float(subtagStorage['delay'])
 				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play("fade")
 			else:
 				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = 1
 				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play("fade")
 			bgLayerIsA = false
 		else:
-			get_node("MainGame/BgLayer/BgImage/BgImage_a").texture = load(p_storage)
-			if p_delay:
-				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = float(p_delay)
+			get_node("MainGame/BgLayer/BgImage/BgImage_a").texture = load(subtagStorage['storage'])
+			if subtagStorage['delay']:
+				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = float(subtagStorage['delay'])
 				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play_backwards("fade")
 			else:
 				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = 1
 				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play_backwards("fade")
 				
 			bgLayerIsA = true
-		return
 	
 	# This sets the character name in the text box
-	if 'name' in validTags[0]:
+	elif mainTag == 'name':
 		get_node("MainGame/DialogueLayer").show()
-		charName = '【%s】\n' % p_any
-		return
+		if subtagStorage['wildcard'].begins_with('%'):
+			saveOptions['charName'] = '【%s】\n' % languages[configSave['language']]['names'][subtagStorage['wildcard']]
+		else:
+			saveOptions['charName'] = '【%s】\n' % subtagStorage['wildcard']
 	
 	# Every 'type' of sound has its own node
 	
 	# This is for short sounds that do not repeat, like a door closing
-	if 'se' in validTags[0]:
-		$SoundPlayer.stream = load(p_storage)
+	elif mainTag == 'se':
+		if loadingSave:
+			return
+		$SoundPlayer.stream = load(subtagStorage['storage'])
 		$SoundPlayer.volume_db = -5
 		$SoundPlayer.play()
-		return
 		
 	# This is for repeating background noise, like the buzzing of cicadas
-	if 'amb' in validTags[0]:
-		if 'stop' in validTags:
-			$AmbiencePlayer.stop()
+	elif mainTag == 'amb':
+		if loadingSave:
 			return
-		$AmbiencePlayer.stream = load(p_storage)
-		$AmbiencePlayer.volume_db = -5
-		$AmbiencePlayer.play()
-		return
+		if subtagStorage['wildcard'] == 'stop':
+			$AmbiencePlayer.stop()
+		else:
+			$AmbiencePlayer.stream = load(subtagStorage['storage'])
+			$AmbiencePlayer.volume_db = -5
+			$AmbiencePlayer.play()
 		
 	# This is for standard background music
 	# remember looping of music has to be done in the Godot editor under import settings
-	if 'bgm' in validTags:
-		if 'stop' in validTags:
-			$BgmPlayer.stop()
+	elif mainTag == 'bgm':
+		if loadingSave:
 			return
-		$BgmPlayer.stream = load(p_storage)
-		$BgmPlayer.volume_db = -9
-		$BgmPlayer.play()
-		return
+		if subtagStorage['wildcard'] == 'stop':
+			$BgmPlayer.stop()
+		else:
+			$BgmPlayer.stream = load(subtagStorage['storage'])
+			$BgmPlayer.volume_db = -9
+			$BgmPlayer.play()
 		
 	# A quick way to stop all sounds
-	if 'allsoundstop' in validTags:
+	elif mainTag == 'allsoundstop':
 		$BgmPlayer.stop()
 		$VoicePlayer.stop()
 		$AmbiencePlayer.stop()
 		$SoundPlayer.stop()
-		return
 		
 	# Plays a voice, very similar to 'se'
 	# The voice will stop when the dialogue moves forward
-	if 'voice' in validTags[0]:
-		$VoicePlayer.stream = load(p_storage)
+	elif mainTag == 'voice':
+		if loadingSave:
+			return
+		$VoicePlayer.stream = load(subtagStorage['storage'])
 		$VoicePlayer.volume_db = -5
 		$VoicePlayer.play()
-		return
 		
 	# Plays a video
 	# Will play overtop of everything(?) and waits for a mouse click to continue
 	# TODO
 	# BUG: If there is no mouse click and the video ends, it will display a blank screen/whatever was behind it before
-	#      and will still wait for a a signal. Will fix once 'video end' signals are implemented in Godot
-	if 'video' in validTags[0]:
-		if p_storage == null:
+	#      and will still wait for a a signal. Will fix once 'video end' signals are implemented in Godot 3.1
+	elif mainTag == 'video':
+		if loadingSave:
+			return
+		if not subtagStorage['storage']:
 			print('ERROR: Could not find video file')
 			return
 		get_node("MainGame/DialogueLayer").hide()
@@ -588,138 +600,56 @@ func parser(validTags):
 		get_node("SoundPlayer").stop()
 		get_node("VideoPlayer").show()
 		
-		get_node("VideoPlayer").stream = load(p_storage)
+		get_node("VideoPlayer").stream = load(subtagStorage['storage'])
 		get_node("VideoPlayer").volume_db = -5
 		get_node("VideoPlayer").play()
-		return true
-		# commented out for proper video skipping
-#		if skippable != 'true':
-#			continue
-#		else:
-#			continue
+		return 'pass'
 
 	# sets the dialogue box image, position, and size
 	# This allows to use the same text box and dialogue label for NVL style VNs
 	# It also allows for more customized text boxes and text positioning
 	# TODO: this should have the options 'show' and 'hide' with animations to match.
 	# the tag should also be cleaned up a bit
-	if 'dialogue' in validTags[0]:
-		if 'box' in validTags:
+	elif mainTag == 'dialogue':
+		if subtagStorage['wildcard'] == 'box':
+			#saveOptions['dialogueBoxImage'] = '%s,%s,%s,%s' %[subtagStorage['locX'], subtagStorage['locY'] ]
 			var dialogueBox = get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox")
-			dialogueBox.rect_position = Vector2(p_locX, p_locY)
-			dialogueBox.rect_size = Vector2(p_sizeX, p_sizeY)
-			dialogueBox.texture = load(p_storage)
-		if 'text' in validTags:
+			dialogueBox.rect_position = Vector2(subtagStorage['locX'], subtagStorage['locY'])
+			dialogueBox.rect_size = Vector2(subtagStorage['sizeX'], subtagStorage['sizeY'])
+			dialogueBox.texture = load(subtagStorage['storage'])
+		if subtagStorage['wildcard'] == 'text':
 			var textBox = get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue")
-			textBox.rect_position = Vector2(p_locX, p_locY)
-			textBox.rect_size = Vector2(p_sizeX, p_sizeY)
-		return
+			textBox.rect_position = Vector2(subtagStorage['locX'], subtagStorage['locY'])
+			textBox.rect_size = Vector2(subtagStorage['sizeX'], subtagStorage['sizeY'])
 		
 	# jumps to a jump location
-	if 'jump' in validTags[0]:
-		currentJump = p_jump
-		return mainParserLoop(p_jump)
+	elif mainTag == 'jump':
+		saveOptions['jump'] = subtagStorage['wildcard']
+		return mainParserLoop(subtagStorage['wildcard'])
 	
 	# another way to end a section
 	# shouldn't be used in most games, but can allow for very specific scenes
-	if 'sec' in validTags:
+	elif mainTag == 'sec':
 		pass
 		
 	# this should rarely need to be used directly, only as a fallback or for testing
-	if 'break' in validTags:
+	elif mainTag == 'break':
 		isBreak = true
-		return
 	
 	# go through the config file and create the GUI items
 	# this is being done here to make sure they are already created by the time the splashscreen appears
 	# this also makes the config file seperate from the other files
-	if 'engine' in validTags[0]:
-		engineVersion = p_version
-		engineName = p_id
-		return
-	if 'game' in validTags[0]:
-		gameVersion = p_version
-		gameName = p_id
-		return
-	# for everything to do with buttons
-	if 'button' in validTags[0]:
-		
-#		for N in get_node("MainGame/ButtonLayer").get_children():
-#			if N.get_child_count() > 0:
-#				print("["+N.get_name()+"]")
-#				# getallnodes(N)
-#			else:
-#				# Do something
-#				print("- "+N.get_name())
-		
-		if 'delall' in validTags:
-			for button in get_node('MainGame/ButtonLayer').get_children():
-				if button.get_child_count() > 0:
-					pass
-				else:
-					var thisButton = get_node("MainGame/ButtonLayer/%s" % button.get_name())
-					thisButton.texture_normal = null
-					thisButton.texture_hover = null
-					if thisButton.is_visible():
-						thisButton.hide()
-			return
-
-		# actually just removes the textures
-		if 'remove' in validTags:
-			var thisButton = get_node("MainGame/ButtonLayer/Button%s" % p_slot)
-			thisButton.texture_normal = null
-			thisButton.texture_hover = null
-			return
-		
-		if 'hideall' in validTags:
-			for button in get_node("MainGame/ButtonLayer").get_children():
-				if button.get_child_count() > 0:
-					pass
-				else:
-					var thisButton = get_node("MainGame/ButtonLayer/%s" % button.get_name())
-					if thisButton.is_visible():
-						thisButton.hide()
-			return
-		
-		if 'showall' in validTags:
-			for button in get_node("MainGame/ButtonLayer").get_children():
-				if button.get_child_count() > 0:
-					pass
-				else:
-					var thisButton = get_node("MainGame/ButtonLayer/%s" % button.get_name())
-					thisButton.show()
-			return
-		
-		var s = GDScript.new()
-		
-		# setting the button script
-		# Buttons that don't follow pre-made functionallity will have to add their ID here
-		# maybe have functionallity to add button code from the script file?
-		match p_id:
-			'StartButton': s.set_source_code("extends TextureButton\n\nfunc _pressed():\n\tself.hide()\n\treturn get_tree().get_root().get_node(\"MainNode\").mainParserLoop('*start')")
-			'LoadButton': s.set_source_code("extends TextureButton\nfunc _pressed():\n\tprint(\"here\")")
-			'ConfigButton': s.set_source_code("extends TextureButton\nfunc _pressed():\n\tpass")
-			'ExtraButton': s.set_source_code("extends TextureButton\nfunc _pressed():\n\tpass")
-			'ExitButton': s.set_source_code("extends TextureButton\nfunc _pressed():\n\treturn get_tree().quit()")
-			'custom': s.set_source_code("extends TextureButton\nfunc _pressed():\n\t%s" % p_source)
-			_: s.set_source_code("extends TextureButton\nfunc _ready():\n\tpass")
-		s.reload()
-		
-		var button = get_node("MainGame/ButtonLayer/Button%s" % p_slot)
-		button.set_script(s)
-		# set the normal button texture
-		button.texture_normal = load(p_imgNormal)
-		# if there is a hover texture, set it here
-		button.texture_hover = load(p_imgHover)
-		# get the position of the button
-		button.rect_position = Vector2(p_locX, p_locY)
-		# set the size of the button
-		button.rect_size = Vector2(p_sizeX, p_sizeY)
-		button.show()
-		return
+	elif mainTag == 'engine':
+		engineVersion = subtagStorage['version']
+		engineName = subtagStorage['id']
+	
+	elif mainTag == 'game':
+		gameVersion = subtagStorage['version']
+		gameName = subtagStorage['id']
+	
 	# make... slots for stuff
-	if 'preload' in validTags[0]:
-		if 'fg' in validTags:
+	elif mainTag == 'preload':
+		if subtagStorage['wildcard'] == 'fg':
 			var numberOfSlots = 14
 			var num = 1
 			while true:
@@ -731,7 +661,7 @@ func parser(validTags):
 				num += 1
 				if num > numberOfSlots:
 					return
-		if 'buttons' in validTags:
+		elif subtagStorage['wildcard'] == 'buttons':
 			var numberOfSlots = 12
 			var num = 0
 			while true:
@@ -745,48 +675,66 @@ func parser(validTags):
 				num += 1
 				if num > numberOfSlots:
 					return
-		if 'sound' in validTags:
+		elif subtagStorage['wildcard'] == 'sound':
 			var names = ['BgmPlayer', 'AmbiencePlayer', 'VoicePlayer', 'SoundPlayer']
-			for validTags in names:
+			for name in names:
 				var this = AudioStreamPlayer.new()
-				this.name = validTags
+				this.name = name
 				self.add_child(this)
-		if 'video' in validTags:
+		elif subtagStorage['wildcard'] == 'video':
 			var this = VideoPlayer.new()
 			this.name = 'VideoPlayer'
 			# make sure it is fullscreen
 			this.rect_size =  Vector2(1920, 1080)
 			self.add_child(this)
-		return
-	# containers currently do not work
-	if 'container' in validTags[0]:
-		if 'MainNode' in p_parent:
+		elif subtagStorage['wildcard'] == 'menu':
+			var this = TextureRect.new()
+			this.rect_position = Vector2(80, 80)
+			this.expand = true
+			this.STRETCH_SCALE_ON_EXPAND
+			this.rect_size = Vector2(1760, 920)
+			this.name = 'MenuImage'
+			this.hide()
+			get_node('MainGame/OptionsLayer').add_child(this)
+			var numberOfSlots = 6
+			var num = 0
+			while true:
+				# seems to work well
+				var thisLabel = Label.new()
+				thisLabel.name = "Label" + str(num)
+				thisLabel.hide()
+				get_node('MainGame/OptionsLayer').add_child(thisLabel)
+				num += 1
+				if num > numberOfSlots:
+					return
+	elif mainTag == 'container':
+		if subtagStorage['parent'] == 'MainNode':
 			var MainContainer = Container.new()
-			MainContainer.name = p_id
+			MainContainer.name = subtagStorage['id']
 			self.add_child(MainContainer)
 		else:
 			var subContainer = Container.new()
-			subContainer.name = p_id
-			get_node(p_parent).add_child(subContainer)
-		return
-	if 'instantiate' in validTags:
-		var inst = load("res://scenes/%s.tscn" % p_instance).instance()
-		get_node(p_parent).add_child(inst)
-		return
-		
-#	if 'menu' in validTags[0]:
-#		var this = TextureRect.new()
-#		this.name = p_id
-#		this.rect_position = Vector2(p_locX, p_locY)
-#		this.rect_size = Vector2(p_sizeX, p_sizeY)
-#		get_node(p_parent).add_child(this)
-#		return
+			subContainer.name = subtagStorage['id']
+			get_node(subtagStorage['parent']).add_child(subContainer)
+	elif mainTag == 'instantiate':
+		var inst = load("res://scenes/%s.tscn" % subtagStorage['instance']).instance()
+		get_node(subtagStorage['parent']).add_child(inst)
 		
 	return
-	
-func menuParser(menujump, validTags, subtagDict):
+
+
+# The parser for all menu tags
+func menuParser(menujump):
 	var foundMenu = false
+	var ifTrue = false
+	var inIf = false
 	for value in gameScenario['*menu']:
+		
+		subtagClear()
+		
+		if value.begins_with('#'):
+			continue
+	
 		if menujump in value:
 			foundMenu = true
 			continue
@@ -794,39 +742,80 @@ func menuParser(menujump, validTags, subtagDict):
 		# if it has reached another menu tag, don't read it as well
 		if foundMenu == true and '@@' in value:
 			return
-			
+		
+		# if the menu was found
 		if foundMenu == true:
-			if 'setfront' in value:
+			lexer(value)
+		
+			var mainTag = subtagStorage['mainTag']
+			
+			if mainTag == 'endif':
+				inIf = false
+				ifTrue = false
+				continue
+			
+			if inIf:
+				# if the condition was not met, skip the lines
+				if ifTrue == false:
+					continue
+				
+			if mainTag == 'if':
+				inIf = true
+				# if the condition is met
+				if subtagStorage['wildcard'] == 'var':
+					if saveOptions[subtagStorage['variableName']] == subtagStorage['variableValue']:
+						ifTrue = true
+				elif subtagStorage['wildcard'] == 'conf':
+					if configSave[subtagStorage['variableName']] == subtagStorage['variableValue']:
+						ifTrue = true
+				continue
+			
+			if mainTag == 'setfront':
 				inMenu = true
 				continue
 				
-			if 'menuimg' in value:
+			if mainTag == 'menuimg':
 				get_node("MainGame/DialogueLayer").hide()
-				get_node("MainGame/OptionsLayer/OptionsTexture").texture = load(value.split('\"')[1])
+				get_node("MainGame/OptionsLayer/MenuImage").texture = load(subtagStorage['storage'])
+				get_node("MainGame/OptionsLayer/MenuImage").show()
 				continue
 			
-			# most of this is placeholder until I incorporate the menu system better
-			if 'button' in value:
-				if 'delall' in validTags:
+			# TODO: unlike the main parser, this one doesn't go through a debugger (yet)
+			# also, the subtags for the buttons are keywords that should not be used for any other purpose
+			#    in the tag (such as for file names or custom script added in the script file)
+			if mainTag == 'button':
+				if subtagStorage['wildcard'] == 'delall':
+					# destroy all buttons
 					for button in get_node('MainGame/ButtonLayer').get_children():
-						if button.get_child_count() > 0:
-							pass
-						else:
-							var thisButton = get_node("MainGame/ButtonLayer/%s" % button.get_name())
-							thisButton.texture_normal = null
-							thisButton.texture_hover = null
-							if thisButton.is_visible():
-								thisButton.hide()
+						# set the buttons for deletion and remove them from the ButtonLayer
+						# TODO: make sure this actually deletes the buttons, not just removes them
+						button.queue_free()
+						get_node('MainGame/ButtonLayer').remove_child(button)
+					
+					# recreate the buttons that were destroyed
+					var numberOfSlots = 12
+					# do not remake Button0, it should never be deleted
+					var num = 0
+					while true:
+						var thisButton = TextureButton.new()
+						thisButton.name = "Button" + str(num)
+						thisButton.hide()
+						thisButton.expand = true
+						thisButton.STRETCH_KEEP_ASPECT
+						get_node('MainGame/ButtonLayer').add_child(thisButton)
+						num += 1
+						if num > numberOfSlots:
+							break
 					continue
 		
 				# actually just removes the textures
-				if 'remove' in validTags:
+				if subtagStorage['wildcard'] == 'remove':
 					var thisButton = get_node("MainGame/ButtonLayer/Button%s" % value.split('\"')[3])
 					thisButton.texture_normal = null
 					thisButton.texture_hover = null
 					continue
 				
-				if 'hideall' in validTags:
+				if subtagStorage['wildcard'] == 'hideall':
 					for button in get_node("MainGame/ButtonLayer").get_children():
 						if button.get_child_count() > 0:
 							pass
@@ -836,7 +825,7 @@ func menuParser(menujump, validTags, subtagDict):
 								thisButton.hide()
 					continue
 				
-				if 'showall' in validTags:
+				if subtagStorage['wildcard'] == 'showall':
 					for button in get_node("MainGame/ButtonLayer").get_children():
 						if button.get_child_count() > 0:
 							pass
@@ -847,62 +836,138 @@ func menuParser(menujump, validTags, subtagDict):
 				
 				var s = GDScript.new()
 				
-				# setting the button script
-				# Buttons that don't follow pre-made functionallity will have to add their ID here
-				# maybe have functionallity to add button code from the script file?
-				match value.split('\"')[1]:
-					'StartButton': s.set_source_code("extends TextureButton\n\nfunc _pressed():\n\tself.hide()\n\treturn get_tree().get_root().get_node(\"MainNode\").mainParserLoop('*start')")
-					'LoadButton': s.set_source_code("extends TextureButton\nfunc _pressed():\n\tprint(\"here\")")
-					'ConfigButton': s.set_source_code("extends TextureButton\nfunc _pressed():\n\tpass")
-					'ExtraButton': s.set_source_code("extends TextureButton\nfunc _pressed():\n\tpass")
-					'ExitButton': s.set_source_code("extends TextureButton\nfunc _pressed():\n\treturn get_tree().quit()")
-					'custom': s.set_source_code("extends TextureButton\nfunc _pressed():\n\t%s" % value.split('\"')[13])
-					_: s.set_source_code("extends TextureButton\nfunc _ready():\n\tpass")
+				# setting the button script from file
+				s.set_source_code(buttonScript[subtagStorage['id']])
 				s.reload()
 				
-				var button = get_node("MainGame/ButtonLayer/Button%s" % value.split('\"')[3])
+				var button = get_node("MainGame/ButtonLayer/Button%s" % subtagStorage['slot'])
 				button.set_script(s)
+				# for save and load buttons
+				if subtagStorage['id'] == "##SaveGameButton" or subtagStorage['id'] == "##LoadGameButton":
+					if subtagStorage['id'] == "##SaveGameButton":
+						# wait to make sure the new png file exists when this is called
+						$Timer.wait_time = 0.1
+						$Timer.start()
+						yield($Timer, "timeout")
+					var allSaveFiles = listAllFilesInDirectory("user://")
+					var existingImageFileName = ''
+					for fileName in allSaveFiles:
+						if fileName.begins_with('sc' + subtagStorage['slot']):
+							existingImageFileName = fileName
+					if existingImageFileName != '':
+						var file = "user://%s" % existingImageFileName
+						# ==  workaround for not importing the image in the user:// dir  == Thank you @LinuxUserGD, issue #18367 !!
+						var png_file = File.new()
+						png_file.open(file, File.READ)
+						var bytes = png_file.get_buffer(png_file.get_len())
+						var img = Image.new()
+						var data = img.load_png_from_buffer(bytes)
+						var imgtex = ImageTexture.new()
+						imgtex.create_from_image(img)
+						png_file.close()
+						button.texture_normal = imgtex
+					else:
+						button.texture_normal = load(allGameFiles['auto_n.png'])
+					button.rect_position = Vector2(int(subtagStorage['locX']), int(subtagStorage['locY']))
+					# set the size of the button
+					button.rect_size = Vector2(int(subtagStorage['sizeX']), int(subtagStorage['sizeY']))
+					button.show()
+					continue
+				
 				# set the normal button texture
-				button.texture_normal = load(allGameFiles[value.split('\"')[9]][0])
+				button.texture_normal = load(subtagStorage['imgNormal'])
 				# if there is a hover texture, set it here
-				button.texture_hover = load(allGameFiles[value.split('\"')[11]][0])
+				button.texture_hover = load(subtagStorage['imgHover'])
+				button.set_process(true)
+				if subtagStorage['imgPressed']:
+					button.texture_disabled = load(subtagStorage['imgPressed'])
 				# get the position of the button
-				button.rect_position = Vector2(int(value.split('\"')[5].split('x')[0]), int(value.split('\"')[5].split('x')[1]))
+				button.rect_position = Vector2(int(subtagStorage['locX']), int(subtagStorage['locY']))
 				# set the size of the button
-				button.rect_size = Vector2(int(value.split('\"')[7].split('x')[0]), int(value.split('\"')[7].split('x')[1]))
+				button.rect_size = Vector2(int(subtagStorage['sizeX']), int(subtagStorage['sizeY']))
 				button.show()
 				continue
 		
-			
-
 	
-# saving and loading the game
-# doesn't do anything yet
-func loadGame(dir):
-	var directory = Directory.new()
-	if directory.file_exists("user://save/%s" % dir):
-		var loadFile = File.new()
-		loadFile.open("user://save/%s" % dir, File.READ)
-	else:
-		pass
-		
-# doesn't save anything yet
-func saveGame(isNewDir):
-#	get_viewport().queue_screen_capture()
-#	yield(get_tree(), "idle_frame")
-#	yield(get_tree(), "idle_frame")
-#	var saveImage = get_viewport().get_screen_capture()
-	var time = OS.get_datetime()
-	time = "%s_%02d_%02d_%02d%02d%02d" % [time['year'], time['month'], time['day'], time['hour'], time['minute'], time['second']]
-	if isNewDir:
-		var directory = Directory.new()
-		directory.make_dir_recursive("user://save/")
+# TODO: this function for loading the game seems to work fine. 
+#       Only the buttons and loop need to be modified for it to work on a built game
+func loadGame(slot):
+	var allSaveFiles = listAllFilesInDirectory("user://")
+	var loadFileName = ''
+	for fileName in allSaveFiles:
+		if fileName.begins_with(slot):
+			loadFileName = fileName
+			break
+	if loadFileName == '':
+		return
 	var saveFile = File.new()
-	saveFile.open("user://save/save.sps", File.WRITE)
-	saveFile.store_var(startLine)
-	saveFile.store_var(time)
-#	saveImage.flip_y()
-#	saveImage.save_png("user://save/save.png")
+	saveFile.open_encrypted_with_pass("user://%s" % loadFileName, File.READ, encryptionKey)
+	var saveData = parse_json(saveFile.get_line())
+	if slot == 'cf':
+		configSave = saveData
+		return configSave
+	saveOptions = saveData
+	loadingSave = true
+	forceLoad = true
+	return mainParserLoop(saveOptions['jump'])
+	
+		
+# saving seems to work fine; it even encrypts the save file (but not the images)
+func saveGame(slot):
+	# get a list of all save files
+	var allSaveFiles = listAllFilesInDirectory("user://")
+	var existingSaveFileName = ''
+	var existingImageFileName = ''
+	for fileName in allSaveFiles:
+		if fileName.begins_with(slot):
+			existingSaveFileName = fileName
+		if fileName.begins_with('sc' + slot):
+			existingImageFileName = fileName
+	var saveFile = File.new()
+	# if the old save file was found
+	if existingSaveFileName != '':
+		# TODO: ask for confirmation before overwriting save file unless it is a 'cf' file
+		# remove old save in the slot
+		var dir = Directory.new()
+		dir.remove("user://%s" % existingSaveFileName)
+	if existingImageFileName != '':
+		# remove old save screenshot
+		var dir = Directory.new()
+		dir.remove("user://%s" % existingImageFileName)
+	if slot == 'cf':
+		var newFileName = slot + '.cfsave'
+		saveFile.open_encrypted_with_pass("user://%s" % newFileName, File.WRITE, encryptionKey)
+		saveFile.store_line(to_json(configSave))
+		saveFile.close()
+		return
+	else:
+		var time = OS.get_datetime()
+		time = "%s_%02d_%02d_%02d,%02d" % [time['year'], time['month'], time['day'], time['hour'], time['minute']]
+		var newFileName = slot + ';' + time + '.kpsave'
+		saveFile.open_encrypted_with_pass("user://%s" % newFileName, File.WRITE, encryptionKey)
+		saveFile.store_line(to_json(saveOptions))
+		saveFile.close()
+		
+		# take a screenshot
+		# hide the menu and buttons so that they don't get in the screenshot, then show them again once it's taken
+		get_tree().get_root().get_node('MainNode/MainGame/DialogueLayer').show()
+		get_tree().get_root().get_node('MainNode/MainGame/OptionsLayer').hide()
+		get_tree().get_root().get_node('MainNode/MainGame/ButtonLayer').hide()
+		get_viewport().set_clear_mode(Viewport.CLEAR_MODE_ONLY_NEXT_FRAME)
+		# Let two frames pass to make sure the screen was captured
+		yield(get_tree(), "idle_frame")
+		yield(get_tree(), "idle_frame")
+		get_tree().get_root().get_node('MainNode/MainGame/DialogueLayer').hide()
+		get_tree().get_root().get_node('MainNode/MainGame/OptionsLayer').show()
+		get_tree().get_root().get_node('MainNode/MainGame/ButtonLayer').show()
+	
+		# Retrieve the captured image
+		var img = get_viewport().get_texture().get_data()
+	  
+		# Flip it on the y-axis (because it's flipped)
+		img.flip_y()
+		# save to a file
+		img.save_png("user://%s.png" % ('sc' + slot + ';' + time))
 	return
 
 
@@ -914,33 +979,47 @@ func loadData(vars):
 	# saving the directories of all game files in memory
 	# will only go two directories deep, deeper files will not be allowed by the debugger
 	# TODO: allow files no matter how deep in the file directory they are
-	# TODO: split the files up into sections ex. voice, bg for quicker debug lookup
 	var allFiles = listAllFilesInDirectory("res://")
-	for file in allFiles:
-		if '.import' in file:
+	
+	# it will read uncompressed resources differently than those in a .pck file
+	if OS.is_debug_build() and debugRelease == false:
+		print('=========================DEBUG==========================')
+		for file in allFiles:
+			if '.import' in file:
 				continue
-		allGameFiles[file] = ["res://"+file]
-		if '.' in file:
-			continue
-		var subFiles = listAllFilesInDirectory("res://%s" %file)
-		for sub in subFiles:
-			if '.import' in sub:
-				continue
-			allGameFiles[sub] = ["res://"+file+"/"+sub]
+			allGameFiles[file] = "res://"+file
 			if '.' in file:
 				continue
-			var lastSubFiles = listAllFilesInDirectory("res://"+file+"/"+sub)
-			for lastsub in lastSubFiles:
-				if '.import' in lastsub:
+			var subFiles = listAllFilesInDirectory("res://%s" %file)
+			for sub in subFiles:
+				if '.import' in sub:
 					continue
-				allGameFiles[lastsub] = ["res://"+file+"/"+sub+"/"+lastsub]
+				allGameFiles[sub] = "res://"+file+"/"+sub
+				if '.' in file:
+					continue
+				var lastSubFiles = listAllFilesInDirectory("res://"+file+"/"+sub)
+				for lastsub in lastSubFiles:
+					if '.import' in lastsub:
+						continue
+					allGameFiles[lastsub] = "res://"+file+"/"+sub+"/"+lastsub
 	
+	# reading files from a *.pck file
+	# a bit more complicated since they are (almost) all *.import files, instead of the originals
+	# will only go one directory deep
+	else:
+		print('==release==')
+		for file in allFiles:
+			if '.' in file:
+				continue
+			var subFiles = listAllFilesInDirectory("res://%s" %file)
+			for sub in subFiles:
+				allGameFiles[sub.replace('.import', '')] = "res://"+file+"/"+sub.replace('.import', '')
+			
 	# return a list of files in the directory
 	var fileNames = listAllFilesInDirectory("res://scenario")
 	# print(fileNames)
 	
-	# save the file lines as lists
-	# TODO: hook this up with the dictionary defined above of all the file paths
+	# save the file lines as a list
 	for name in fileNames:
 		# open the file
 		var file = File.new()
@@ -978,11 +1057,8 @@ func loadData(vars):
 					grammarRules[grammarList[1]] = rules
 				else:
 					grammarSubtag[grammarList[1]] = value
-		# TODO: make localization happen as lines are needed
-#		elif name.ends_with('.kpd'):
-#			dialogueFile = parse_json(fileText)
-#			if dialogueFile == null:
-#				print('\n\nERROR: JSON FILE IS NONEXISTENT OR HAS A SYNTAX ERROR\n\n')
+		
+		# for dialogue and tag files
 		if name.ends_with('.kp'):
 			# keep the newline, otherwise the value will not be saved in the list (for accurate line counting)
 			var thisSectionJump = ''
@@ -990,28 +1066,46 @@ func loadData(vars):
 				if value.begins_with('*'):
 					thisSectionJump = value
 					gameScenario[thisSectionJump] = []
+					continue
 				# keep blank lines, they will be handled (skipped) by the parser, but the line counted
 				if value == '\n':
 					pass
 				# remove newline characters like usual if it is dialogue or a tag
 				else:
 					value.replace('\n', '')
-				# remove tabs, they don't serve any purpose (yet?)
-				value = value.replace("\t", "")
+				if value.begins_with('['):
+					if enableDebugger:
+						value = value.replace("\t", "")
+					else:
+						value = value.replace("\t", "").replace(' = ', '=').replace('\"', '').replace(',', '')
 				gameScenario[thisSectionJump].append(value)
+		# button scripts
+		if name.ends_with('.kps'):
+			var thisScriptJump = ''
+			var thisFullScript = ''
+			for value in fileText.split('\n', true):
+				if value.begins_with('##'):
+					buttonScript[thisScriptJump] = thisFullScript
+					thisFullScript = ''
+					thisScriptJump = value
+					buttonScript[thisScriptJump] = ''
+					continue
+				thisFullScript += value + '\n'
+		
+		# localization scripts
+		if name.ends_with('.lang'):
+			languages[name.replace('.lang', '')] = JSON.parse(fileText).result
 		else:
 			pass
 		file.close()
 	
-	# insert the dialogue from the dialogue file into the script at runtime
-#	for value in dialogueFile:
-#		if value.begins_with('#'):
-#			continue
-#		var lineCount = 0
-#		for line in gameScenario:
-#			# print(line)
-#			gameScenario[lineCount] = gameScenario[lineCount].replace(value, dialogueFile[value])
-#			lineCount += 1
+	# load the user config data when the game loads
+	var loadConfig = loadGame('cf')
+	if configSave['fullscreen'] == false:
+		# set the window to centered
+		OS.set_window_position(OS.get_screen_size()*0.5 - OS.get_window_size()*0.5)
+	else:
+		OS.window_fullscreen = true
 	
 	print("done loading data")
 	emit_signal("initLoadDone")
@@ -1020,20 +1114,20 @@ func loadData(vars):
 
 # lists all files in a given directory; used to find the dialogue and config files
 func listAllFilesInDirectory(path):
-    var files = []
-    var dir = Directory.new()
-    dir.open(path)
-    dir.list_dir_begin()
+	var files = []
+	var dir = Directory.new()
+	dir.open(path)
+	dir.list_dir_begin()
+	
+	while true:
+		var file = dir.get_next()
+		if file == "":
+			break
+		elif not file.begins_with("."):
+			files.append(file)
 
-    while true:
-        var file = dir.get_next()
-        if file == "":
-            break
-        elif not file.begins_with("."):
-            files.append(file)
-
-    dir.list_dir_end()
-    return files
+	dir.list_dir_end()
+	return files
 
 
 # file end
