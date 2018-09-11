@@ -1,4 +1,4 @@
-# Kiripie Visual Novel Development Tool v0.9.0 for Godot 3.0.x
+# SiennaScripter Visual Novel Development Tool v0.9.0 for Godot 3.0.x
 
 Use the power of the Godot Game Engine to make and port Visual Novels and Point-and-Click games!
 
