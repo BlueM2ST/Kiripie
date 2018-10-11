@@ -3,6 +3,7 @@ extends Node2D
 
 # for loading data from files
 var gameScenario = {}
+var debuggerRules = {}
 var grammarTag = {}
 var grammarRules = {}
 var grammarSubtag = {}
@@ -63,6 +64,7 @@ onready var cancelDialogueAnimation = false
 onready var nextDialogue = false
 onready var setSignal = false
 onready var inMenu = false
+onready var waitForClick = false
 
 func _ready():
 	# set viewport to the camera
@@ -71,13 +73,43 @@ func _ready():
 	loadingThread.start(self, "loadData")
 	yield(self,"initLoadDone")
 	# on starting that game, go to the config jump location to initialize the system
-	mainLoop('*config')
+	saveOptions['jump'] = '*config'
 	
 func _process(delta):
 	OS.set_window_title("Demo, Beta Build | fps: " + str(Engine.get_frames_per_second()) + ' | jump: ' + saveOptions['jump'] + ' | line: ' + str(saveOptions['currentLine']))
 	if setSignal == true:
 		emit_signal("vnDialogueNext")
 		setSignal = false
+	# if this is true, then the game is waiting for input to move forward
+	# ex. for a line of dialogue, splashscreen images
+	# if it is false, then it will continue with the script, which does not need input
+	if waitForClick:
+		if inAutoMode or inSkipMode:
+			if inSkipMode:
+				$AutoTimer.wait_time = 0.1
+			else:
+				$AutoTimer.wait_time = configSave['autoSpeed']
+			$AutoTimer.start()
+			yield($AutoTimer, "timeout")
+			waitForClick = false
+			return
+		else:
+			yield(self, "vnDialogueNext")
+			waitForClick = false
+			get_node("VoicePlayer").stop()
+			get_node("VideoPlayer").stop()
+			get_node("VideoPlayer").hide()
+	else:
+		# in case the process starts before the dictionary is ready
+		if not saveOptions['jump'] in gameScenario:
+			return
+		# continue going through the non-test lines
+		saveOptions['currentLine'] += 1
+		if not str(saveOptions['currentLine']) in gameScenario[saveOptions['jump']]:
+			return
+		var value = gameScenario[saveOptions['jump']][str(saveOptions['currentLine'])]
+		mainLoop(value)
+	
 
 func _input(event):
 	# only check for input if there is no menu to be displayed and the game is not 'paused'
@@ -93,6 +125,7 @@ func _input(event):
 				if cancelDialogueAnimation == false:
 					cancelDialogueAnimation = true
 				else:
+					waitForClick = false
 					emit_signal("vnDialogueNext")
 
 
@@ -108,117 +141,67 @@ var diaAnimIsPlaying = false
 var ifTrue = false
 var inIf = false
 var fgSlots = {}  # tracks the shown image of a sprite. For crossfade
-var emulateClick = false
 var endLoop = false
 
 
-func mainLoop(jumpStart, startLine=0, loadingFromSaveFile = false):
-	saveOptions['jump'] = jumpStart
-	saveOptions['currentLine'] = 0
+func mainLoop(value):
 	
-	# start the loop
-	for value in gameScenario[jumpStart]:
-
+	if str(value).begins_with('*'):
+		return
 		
-		# when loading a game, end this function and make a new one
-		# TODO: when building, it will make a new mainParserLoop() function, but not end the old one
-		#       However, in the editor it will work fine. 
-		#       --> Make a new function to call this one, and end and start this loop
-		if forceLoad:
-			forceLoad = false
-			return mainLoop(saveOptions['jump'])
-			
-		# line counting
-		saveOptions['currentLine'] += 1
-		if not str(saveOptions['currentLine']) in gameScenario[jumpStart]:
-			continue
-		value = gameScenario[jumpStart][str(saveOptions['currentLine'])]
-		
-		# make sure the load gets to the correct line, don't overwrite the saved value
-		if not loadingSave:
-			saveOptions['line'] = saveOptions['currentLine']
-		
-		# TODO: maybe use something like this for loading
-		if isBreak == true:
-			isBreak = false
+	# don't read comments or blank lines
+	if value['mainTag'] == 'empty':
+		return
+	if value['mainTag'] == 'break':
+		isBreak = true
+		return
+	if value['mainTag'] == 'endif':
+		inIf = false
+		ifTrue = false
+		return
+	if inIf:
+		# if the condition was not met, skip the lines
+		if ifTrue == false:
 			return
-		
-		# don't read comments or blank lines
-		if value['mainTag'] == 'empty':
-			continue
-		if value['mainTag'] == 'break':
-			isBreak = true
-			continue
-		if value['mainTag'] == 'endif':
-			inIf = false
-			ifTrue = false
-			continue
-		if inIf:
-			# if the condition was not met, skip the lines
-			if ifTrue == false:
-				continue
-		
-		# check if the line is a tag
-		if not value['mainTag'] == 'text':
-			cancelDialogueAnimation = true
-			interpreter(value)
-			if emulateClick:
-				yield(self, "vnDialogueNext")
-				cancelDialogueAnimation = false
-				emulateClick = false
-				continue
-			else:
-				continue
-		# if loading a save, don't display the dialogue until the saved line is found
-		if loadingSave:
-			if saveOptions['line'] == saveOptions['currentLine']:
-				loadingSave = false
-			else:
-				saveOptions['charName'] = '\n'
-				continue
-		
-		cancelDialogueAnimation = false
-		
-		# for localization support
-		if value['text'].begins_with('%'):
-			# make sure it's valid
-			if value['text'] in languages[configSave['language']]['dialogue']:
-				value = languages[configSave['language']]['dialogue'][value['text']]
-			else:
-				# if it's not valid, then it should be language-specific.
-				continue
+	
+	# check if the line is a tag
+	if not value['mainTag'] == 'text':
+		cancelDialogueAnimation = true
+		interpreter(value)
+		return
+	# if loading a save, don't display the dialogue until the saved line is found
+	if loadingSave:
+		if saveOptions['line'] == saveOptions['currentLine']:
+			loadingSave = false
 		else:
-			value = value['text']
-		
-		saveOptions['currentDialogue'] = value
-		var dialogueToShow = saveOptions['charName'] + value
-		# reset the name value since not all text lines will have a name
-		saveOptions['charName'] = '\n'
-		# wait for a mouse click, enter key, etc.
-		dialogue(dialogueToShow)
-		# in auto mode, there is no need to wait for user input.
-		# It just waits a few seconds after the dialoge is displayed before continuing.
-		# TODO: auto mode doesn't work very well yet: it doesn't wait for the text to be finished showing
-		if inAutoMode or inSkipMode:
-			if inSkipMode:
-				$AutoTimer.wait_time = 0.1
-			else:
-				$AutoTimer.wait_time = configSave['autoSpeed']
-			$AutoTimer.start()
-			yield($AutoTimer, "timeout")
+			saveOptions['charName'] = '\n'
+			return
+	
+	cancelDialogueAnimation = false
+	
+	# for localization support
+	if value['text'].begins_with('%'):
+		# make sure it's valid
+		if value['text'] in languages[configSave['language']]['dialogue']:
+			value = languages[configSave['language']]['dialogue'][value['text']]
 		else:
-			yield(self, "vnDialogueNext")
-		cancelDialogueAnimation = false
-		get_node("VoicePlayer").stop()
-		get_node("VideoPlayer").stop()
-		get_node("VideoPlayer").hide()
-		continue
+			# if it's not valid, then it should be language-specific.
+			return
+	else:
+		value = value['text']
+	
+	saveOptions['currentDialogue'] = value
+	var dialogueToShow = saveOptions['charName'] + value
+	# reset the name value since not all text lines will have a name
+	saveOptions['charName'] = '\n'
+	# wait for a mouse click, enter key, etc.
+	dialogue(dialogueToShow)
+	
+	cancelDialogueAnimation = false
+	waitForClick = true
 
 
 # displaying dialogue in the textbox.
-# TODO: this is the main cause of fps drops (30 -> ~15 sometimes)
-#       Maybe this function doesn't return properly when the next dialogue line is playing,
-#       resulting in two or more instances running.
 func dialogue(dialogue):
 	var currentDialogue = ''
 	if not inSkipMode:
@@ -252,8 +235,12 @@ func lexer():
 		var fileText = file.get_as_text()
 		# check if it's a config file
 		
-		# TODO: add a way to debug the grammar file
+		# for the debugger
 		if name.ends_with('.kpcf'):
+			if not enableDebugger:
+				pass
+			debuggerRules['tag'] = {}
+			debuggerRules['subtag'] = {}
 			for value in fileText.split('\n', false):
 				# ignore the comments and empty lines since there is no debugger yet for the config file
 				if value == '\n' or value.begins_with('#') or value.begins_with('@@'):
@@ -262,28 +249,33 @@ func lexer():
 				value = value.replace(' ', '')
 				var grammarList = value.split(';')
 				if grammarList[0] == "tag":
-					var canHave = []
-					var rules = []
-					# for what the tag can have
+					
+					debuggerRules[grammarList[0]][grammarList[1]] = {}
+					
+					debuggerRules[grammarList[0]][grammarList[1]]['allowedSubtags'] = {}
+					
 					if ',' in grammarList[2]:
 						for value in grammarList[2].split(','):
-							canHave.append(value)
+							debuggerRules[grammarList[0]][grammarList[1]]['allowedSubtags'] = value
 					else:
-						canHave.append(grammarList[2])
-					# for the rules of using the subtags and what subtags the tag requires
+						debuggerRules[grammarList[0]][grammarList[1]]['allowedSubtags'] = grammarList[2]
+					
+					debuggerRules[grammarList[0]][grammarList[1]]['subtagRules'] = {}
+					
 					if grammarList.size() > 3:
+						
 						if ',' in grammarList[3]:
 							for value in grammarList[3].split(','):
-								rules.append(value)
+								debuggerRules[grammarList[0]][grammarList[1]]['subtagRules'] = value
 						else:
-							rules.append(grammarList[3])
+							debuggerRules[grammarList[0]][grammarList[1]]['subtagRules'] = grammarList[3]
 					else:
-						rules.append(null)
-					# add the lists to the global-scope variables
-					grammarTag[grammarList[1]] = canHave
-					grammarRules[grammarList[1]] = rules
-				else:
-					grammarSubtag[grammarList[1]] = value
+						debuggerRules[grammarList[0]][grammarList[1]]['subtagRules'] = 'default'
+						
+				if grammarList[0] == "subtag":
+					debuggerRules[grammarList[0]][grammarList[1]] = {}
+					debuggerRules[grammarList[0]][grammarList[1]]['subtagRegex'] = grammarList[2]
+					
 		
 		var lineCount = 0
 		# for dialogue and tag files
@@ -356,17 +348,22 @@ func lexer():
 				if not enableDebugger:
 					gameScenario[thisSectionJump][str(lineCount)] = tokenDict
 					continue
-				else:
-					var regex = RegEx.new()
-					var foundNoValidSubtags = true
+				
+				var regex = RegEx.new()
+				var errorReturn = 'error'
+	
+				if not tokenDict['mainTag'] in debuggerRules['tag']:
+					print('ERROR on line '+str(lineCount)+': tag <'+tokenDict['mainTag']+'> does not exist. Skipping tag.')
+					continue
+				
+				for token in tokenDict:
+					if not token in debuggerRules['']:
+						pass
+					
+					
+					var foundNoValidSubtags
 					var usedSubtags = []
-					var errorReturn = 'error'
-		
-					if not tokenDict['mainTag'] in grammarTag:
-						print('ERROR on line '+str(lineCount)+': tag <'+tokenDict['mainTag']+'> does not exist. Skipping tag.')
-						continue
-		
-					for rule in grammarTag[tokenDict['mainTag']]:
+					for rule in tokenDict['mainTag']:
 						var originalRule = rule
 						# if it is supposed to jump to a regex value
 						if '@' in rule:
@@ -432,7 +429,6 @@ func lexer():
 			pass
 		file.close()
 
-
 func parser():
 	pass
 
@@ -480,7 +476,7 @@ func interpreter(line):
 	elif mainTag == 'img':
 		get_node("MainGame/DialogueLayer").hide()
 		get_node("MainGame/BgLayer/BgImage/BgImage_a").texture = load(line['storage'])
-		emulateClick = true
+		waitForClick = true
 		return
 	
 	# This is for sprites
@@ -657,8 +653,7 @@ func interpreter(line):
 	# jumps to a jump location
 	elif mainTag == 'jump':
 		saveOptions['jump'] = line['singleTag']
-		endLoop = true
-		mainLoop(line['singleTag'])
+		saveOptions['currentLine'] = 0
 		return
 	
 	# another way to end a section
@@ -710,6 +705,8 @@ func interpreter(line):
 				num += 1
 				if num > numberOfSlots:
 					return
+		# sliders are not working yet. They might eventually be made in a new scene for simplicity
+		#  instead of being made like this
 #		elif line['singleTag'] == 'sliders':
 #			return
 #			# disabled for now
@@ -791,7 +788,6 @@ func menuInterpreter(menujump):
 	for line in gameScenario['*menu']:
 		line = gameScenario['*menu'][line]
 		var mainTag = line['mainTag']
-		print(line)
 		
 		if mainTag == 'empty':
 			continue
@@ -977,11 +973,9 @@ func loadGame(slot):
 	var saveData = parse_json(saveFile.get_line())
 	if slot == 'cf':
 		configSave = saveData
-		return configSave
+		return
 	saveOptions = saveData
-	loadingSave = true
-	forceLoad = true
-	return mainLoop(saveOptions['jump'])
+	return
 	
 		
 # saving seems to work fine; it even encrypts the save file (but not the images)
