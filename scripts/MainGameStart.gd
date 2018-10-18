@@ -4,9 +4,6 @@ extends Node2D
 # for loading data from files
 var gameScenario = {}
 var debuggerRules = {}
-var grammarTag = {}
-var grammarRules = {}
-var grammarSubtag = {}
 var allGameFiles = {}
 var buttonScript = {}
 var languages = {}
@@ -72,7 +69,7 @@ func _ready():
 	# load initial data
 	loadingThread.start(self, "loadData")
 	yield(self,"initLoadDone")
-	# on starting that game, go to the config jump location to initialize the system
+	# on starting the game, go to the config jump location to initialize the system
 	saveOptions['jump'] = '*config'
 	
 func _process(delta):
@@ -109,7 +106,7 @@ func _process(delta):
 			return
 		var value = gameScenario[saveOptions['jump']][str(saveOptions['currentLine'])]
 		mainLoop(value)
-	
+
 
 func _input(event):
 	# only check for input if there is no menu to be displayed and the game is not 'paused'
@@ -201,9 +198,15 @@ func mainLoop(value):
 	waitForClick = true
 
 
+var currentDialogue = ''
 # displaying dialogue in the textbox.
 func dialogue(dialogue):
-	var currentDialogue = ''
+	var endDialogueSection = false
+	if '[w]' in dialogue:
+		dialogue = dialogue.replace('[w]', '')
+		endDialogueSection = true
+	if '[r]' in dialogue:
+		dialogue = dialogue.replace('[r]', '\n')
 	if not inSkipMode:
 		$Timer.wait_time = configSave['textSpeed']
 		for value in dialogue:
@@ -211,14 +214,20 @@ func dialogue(dialogue):
 			$Timer.start()
 			yield($Timer, "timeout")
 			if cancelDialogueAnimation == true:
+				if endDialogueSection:
+					currentDialogue = ''
 				get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue").set_text(dialogue)
 				return
 			else:
 				get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue").set_text(currentDialogue)
 				continue
 	else:
+		if endDialogueSection:
+			currentDialogue = ''
 		get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue").set_text(dialogue)
 		return
+	if endDialogueSection:
+		currentDialogue = ''
 	cancelDialogueAnimation = true
 	return
 
@@ -235,6 +244,7 @@ func lexer():
 		var fileText = file.get_as_text()
 		# check if it's a config file
 		
+		# TODO: the debugger needs quite a bit of work to make it functional
 		# for the debugger
 		if name.ends_with('.kpcf'):
 			if not enableDebugger:
@@ -363,6 +373,9 @@ func lexer():
 					
 					var foundNoValidSubtags
 					var usedSubtags = []
+					# put here to get rid of the errors
+					var grammarSubtag
+					var grammarRules
 					for rule in tokenDict['mainTag']:
 						var originalRule = rule
 						# if it is supposed to jump to a regex value
@@ -429,94 +442,97 @@ func lexer():
 			pass
 		file.close()
 
+
+# TODO: this does nothing right now
 func parser():
 	pass
 
 
-# The parser for all non-menu tags
-# TODO: see if it can be made more efficient (although it's not too bad now)
+# The interpreter for all non-menu tags
 func interpreter(line):
+
+	match line['mainTag']:
 	
-	var mainTag = line['mainTag']
+		'call':
+			if 'reloadSystem' in line['singleTag']:
+				return get_tree().reload_current_scene()
+			elif 'reloadGame' in line['singleTag']:
+				inSkipMode = false
+				return
 	
-	if mainTag == 'call':
-		if 'reloadSystem' in line['singleTag']:
-			return get_tree().reload_current_scene()
-		elif 'reloadGame' in line['singleTag']:
-			inSkipMode = false
+		# Print text from the game script in the game's console
+		# do not use a space when writing the output in the script!
+		'print':
+			print('DEBUG:  ' +  line['singleTag'])
+		
+		'menu':
+			saveOptions['menu'] = line['singleTag']
+			return menuInterpreter(line['singleTag'])
+	
+		# to set a variable from the script
+		'set':
+			saveOptions[line['varName']] = line['varValue']
+		
+		'shake':
+			return shakeScreen()
+	
+		'if':
+			inIf = true
+			if line['singleTag'] == 'var':
+				# if the condition is met
+				if saveOptions[line['varName']] == line['varValue']:
+					ifTrue = true
+	
+		# 'img' and 'bgimg' are very similar. In fact, they are using the same nodes
+		# But 'img' will replace the background image *and* hides the dialogue box
+		# if showing and hiding the dialogue box becomes a tag, this might not be needed
+		# Instead, it can be for images that go overtop the entire scene
+		'img':
+			get_node("MainGame/DialogueLayer").hide()
+			get_node("MainGame/BgLayer/BgImage/BgImage_a").texture = load(line['storage'])
+			waitForClick = true
 			return
 	
-	# Print text from the game script in the game's console
-	# do not use a space when writing the output in the script!
-	elif mainTag == 'print':
-		print('DEBUG:  ' +  line['singleTag'])
+		# This is for sprites
+		# this handles everything to do with basic sprites
+		# TODO: something seems to be wrong in the fgimage layers shown when a sprite is first loaded
+		# TODO: make the fade animation faster (x2?)
+		'fgimg':
+			# remove the image from a given slot
+			if 'singleTag' in line:
+				if line['singleTag'] == 'remove':
+					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % line['slot']).texture = null
+					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % line['slot']).texture = null
+					return
+				get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % line['slot']).playback_speed = 2
+			
+			# assign the position of the sprite slot
+			if 'pos' in line: match line['pos']:
+				'right':
+					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % line['slot']).rect_position = Vector2(450, 0)
+					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % line['slot']).rect_position = Vector2(450, 0)
+				'left':
+					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % line['slot']).rect_position = Vector2(-450, 0)
+					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % line['slot']).rect_position = Vector2(-450, 0)
+				'center':
+					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % line['slot']).rect_position = Vector2(0, 0)
+					get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % line['slot']).rect_position = Vector2(0, 0)
+			# Every sprite slot has its ID assigned by its name
+			# Every slot also has a 'background' and 'foreground' layer where only the foreground of the sprite is shown
+			# This is done for crossfade animations
+			if fgSlots['Sprite%s' % line['slot']]:
+				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % line['slot']).texture = load(line['storage'])
+				get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % line['slot']).play("crossfade")
+				fgSlots['Sprite%s' % line['slot']] = false
+			else:
+				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % line['slot']).texture = load(line['storage'])
+				get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % line['slot']).play_backwards("crossfade")
+				fgSlots['Sprite%s' % line['slot']] = true
 		
-	elif mainTag == 'menu':
-		saveOptions['menu'] = line['singleTag']
-		return menuInterpreter(line['singleTag'])
-	
-	# to set a variable from the script
-	elif mainTag == 'set':
-		saveOptions[line['varName']] = line['varValue']
-		
-	elif mainTag == 'shake':
-		return shakeScreen()
-	
-	elif mainTag == 'if':
-		inIf = true
-		if line['singleTag'] == 'var':
-			# if the condition is met
-			if saveOptions[line['varName']] == line['varValue']:
-				ifTrue = true
-	
-	# 'img' and 'bgimg' are very similar. In fact, they are using the same nodes
-	# But 'img' will replace the background image *and* hides the dialogue box
-	# if showing and hiding the dialogue box becomes a tag, this might not be needed
-	# Instead, it can be for images that go overtop the entire scene
-	elif mainTag == 'img':
-		get_node("MainGame/DialogueLayer").hide()
-		get_node("MainGame/BgLayer/BgImage/BgImage_a").texture = load(line['storage'])
-		waitForClick = true
-		return
-	
-	# This is for sprites
-	# this handles everything to do with basic sprites
-	elif mainTag == 'fgimg':
-		# remove the image from a given slot
-		if 'singleTag' in line:
-			if line['singleTag'] == 'remove':
-				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % line['slot']).texture = null
-				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % line['slot']).texture = null
-				return
-			get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % line['slot']).playback_speed = 2
-		
-		# assign the position of the sprite slot
-		if 'pos' in line: match line['pos']:
-			'right':
-				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % line['slot']).rect_position = Vector2(450, 0)
-				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % line['slot']).rect_position = Vector2(450, 0)
-			'left':
-				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % line['slot']).rect_position = Vector2(-450, 0)
-				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % line['slot']).rect_position = Vector2(-450, 0)
-			'center':
-				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % line['slot']).rect_position = Vector2(0, 0)
-				get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % line['slot']).rect_position = Vector2(0, 0)
-		# Every sprite slot has its ID assigned by its name
-		# Every slot also has a 'background' and 'foreground' layer where only the foreground of the sprite is shown
-		# This is done for crossfade animations
-		if fgSlots['Sprite%s' % line['slot']]:
-			get_node("MainGame/CharacterLayer/Sprite%s/Sprite_b" % line['slot']).texture = load(line['storage'])
-			get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % line['slot']).play("crossfade")
-			fgSlots['Sprite%s' % line['slot']] = false
-		else:
-			get_node("MainGame/CharacterLayer/Sprite%s/Sprite_a" % line['slot']).texture = load(line['storage'])
-			get_node("MainGame/CharacterLayer/Sprite%s/SpriteAnimationPlayer" % line['slot']).play_backwards("crossfade")
-			fgSlots['Sprite%s' % line['slot']] = true
-		
-	# Works similarly to the fgimg slots for crossfade, but is simpler since there is nothing
-	#    behind the bgimage and there is only one background
-	elif mainTag == 'bgimg':
-		
+		# Works similarly to the fgimg slots for crossfade, but is simpler since there is nothing
+		#    behind the bgimage and there is only one background
+		'bgimg':
+			
 		### keep this for bug fixing; it checks for childen of a node
 #		for N in self.get_children():
 #			if N.get_child_count() > 0:
@@ -526,259 +542,261 @@ func interpreter(line):
 #				# Do something
 #				print("- "+N.get_name())
 
-		# save the current background
-		saveOptions['bgimage'] = line['storage']
-		
-		# Background will always fade, even without 'fadein'
-		# I don't think there is any reason for background images to not fade, but it is easy to add in here
-		
-		if bgLayerIsA:
-			get_node("MainGame/BgLayer/BgImage/BgImage_b").texture = load(line['storage'])
-			if 'delay' in line:
-				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = float(line['delay'])
-				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play("fade")
-			else:
-				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = 1
-				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play("fade")
-			bgLayerIsA = false
-		else:
-			get_node("MainGame/BgLayer/BgImage/BgImage_a").texture = load(line['storage'])
-			if 'delay' in line:
-				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = float(line['delay'])
-				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play_backwards("fade")
-			else:
-				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = 1
-				get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play_backwards("fade")
-				
-			bgLayerIsA = true
-	
-	# This sets the character name in the text box
-	elif mainTag == 'name':
-		get_node("MainGame/DialogueLayer").show()
-		if line['singleTag'].begins_with('%'):
-			saveOptions['charName'] = '【%s】\n' % languages[configSave['language']]['names'][line['singleTag']]
-		else:
-			saveOptions['charName'] = '【%s】\n' % line['singleTag']
-	
-	# Every 'type' of sound has its own node
-	
-	# This is for short sounds that do not repeat, like a door closing
-	elif mainTag == 'se':
-		if loadingSave:
-			return
-		$SoundPlayer.stream = load(line['storage'])
-		$SoundPlayer.volume_db = -5
-		$SoundPlayer.play()
-		
-	# This is for repeating background noise, like the buzzing of cicadas
-	elif mainTag == 'amb':
-		if loadingSave:
-			return
-		if 'singleTag' in line and line['singleTag'] == 'stop':
-			$AmbiencePlayer.stop()
-		else:
-			$AmbiencePlayer.stream = load(line['storage'])
-			$AmbiencePlayer.volume_db = -5
-			$AmbiencePlayer.play()
-		
-	# This is for standard background music
-	# remember looping of music has to be done in the Godot editor under import settings
-	elif mainTag == 'bgm':
-		if loadingSave:
-			return
-		if 'singleTag' in line:
-			if line['singleTag'] == 'stop':
-				$BgmPlayer.stop()
-		else:
-			$BgmPlayer.stream = load(line['storage'])
-			$BgmPlayer.volume_db = -9
-			$BgmPlayer.play()
-		
-	# A quick way to stop all sounds
-	elif mainTag == 'allsoundstop':
-		$BgmPlayer.stop()
-		$VoicePlayer.stop()
-		$AmbiencePlayer.stop()
-		$SoundPlayer.stop()
-		
-	# Plays a voice, very similar to 'se'
-	# The voice will stop when the dialogue moves forward
-	elif mainTag == 'voice':
-		if loadingSave:
-			return
-		$VoicePlayer.stream = load(line['storage'])
-		$VoicePlayer.volume_db = -5
-		$VoicePlayer.play()
-		
-	# Plays a video
-	# Will play overtop of everything(?) and waits for a mouse click to continue
-	# TODO
-	# BUG: If there is no mouse click and the video ends, it will display a blank screen/whatever was behind it before
-	#      and will still wait for a a signal. Will fix once 'video end' signals are implemented in Godot 3.1
-	elif mainTag == 'video':
-		if loadingSave:
-			return
-		if not line['storage']:
-			print('ERROR: Could not find video file')
-			return
-		get_node("MainGame/DialogueLayer").hide()
-		# stop all other music
-		get_node("BgmPlayer").stop()
-		# $VoicePlayer.stop()
-		get_node("AmbiencePlayer").stop()
-		get_node("SoundPlayer").stop()
-		get_node("VideoPlayer").show()
-		
-		get_node("VideoPlayer").stream = load(line['storage'])
-		get_node("VideoPlayer").volume_db = -5
-		get_node("VideoPlayer").play()
-		return
-
-	# sets the dialogue box image, position, and size
-	# This allows to use the same text box and dialogue label for NVL style VNs
-	# It also allows for more customized text boxes and text positioning
-	# TODO: this should have the options 'show' and 'hide' with animations to match.
-	# the tag should also be cleaned up a bit
-	elif mainTag == 'dialogue':
-		if line['singleTag'] == 'box':
-			var dialogueBox = get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox")
-			dialogueBox.rect_position = Vector2(line['locX'], line['locY'])
-			dialogueBox.rect_size = Vector2(line['sizeX'], line['sizeY'])
-			dialogueBox.texture = load(line['storage'])
-		if line['singleTag'] == 'text':
-			var textBox = get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue")
-			textBox.rect_position = Vector2(line['locX'], line['locY'])
-			textBox.rect_size = Vector2(line['sizeX'], line['sizeY'])
-		
-	# jumps to a jump location
-	elif mainTag == 'jump':
-		saveOptions['jump'] = line['singleTag']
-		saveOptions['currentLine'] = 0
-		return
-	
-	# another way to end a section
-	# shouldn't be used in most games, but can allow for very specific scenes
-	elif mainTag == 'sec':
-		pass
-		
-	# this should rarely need to be used directly, only as a fallback or for testing
-	elif mainTag == 'break':
-		isBreak = true
-		print('found break')
-	
-	# go through the config file and create the GUI items
-	# this is being done here to make sure they are already created by the time the splashscreen appears
-	# this also makes the config file seperate from the other files
-	elif mainTag == 'engine':
-		engineVersion = line['version']
-		engineName = line['id']
-	
-	elif mainTag == 'game':
-		gameVersion = line['version']
-		gameName = line['id']
-	
-	# make... slots for stuff
-	elif mainTag == 'preload':
-		if line['singleTag'] == 'fg':
-			var numberOfSlots = 14
-			var num = 1
-			while true:
-				# seems to work well
-				var this = load("res://scenes/Sprite.tscn").instance()
-				this.name = "Sprite" + str(num)
-				get_node('MainGame/CharacterLayer').add_child(this)
-				fgSlots[this.name] = true
-				num += 1
-				if num > numberOfSlots:
-					return
-		elif line['singleTag'] == 'buttons':
-			var numberOfSlots = 12
-			var num = 0
-			while true:
-				# seems to work well
-				var thisButton = TextureButton.new()
-				thisButton.name = "Button" + str(num)
-				thisButton.hide()
-				thisButton.expand = true
-				thisButton.STRETCH_KEEP_ASPECT
-				get_node('MainGame/ButtonLayer').add_child(thisButton)
-				num += 1
-				if num > numberOfSlots:
-					return
-		# sliders are not working yet. They might eventually be made in a new scene for simplicity
-		#  instead of being made like this
-#		elif line['singleTag'] == 'sliders':
-#			return
-#			# disabled for now
-#			var numberOfSlots = 10
-#			var num = 0
-#			print('found sliders')
-#			while true:
-#				# seems to work well
-#				var thisSlider = HSlider.new()
-#				thisSlider.name = "Slider" + str(num)
-#				thisSlider.hide()
-#				thisSlider.editable = true
-#				thisSlider.tick_count = 100
-#				thisSlider.ticks_on_borders = true
-#				print('got this far')
-#				thisSlider.theme = "MainGameStart"
-#				get_node('MainGame/ButtonLayer').add_child(thisSlider)
-#				num += 1
-#				if num > numberOfSlots:
-#					print('sliders made')
-#					return
+			# save the current background
+			saveOptions['bgimage'] = line['storage']
 			
-		elif line['singleTag'] == 'sound':
-			var names = ['BgmPlayer', 'AmbiencePlayer', 'VoicePlayer', 'SoundPlayer']
-			for name in names:
-				var this = AudioStreamPlayer.new()
-				this.name = name
+			# Background will always fade, even without 'fadein'
+			# I don't think there is any reason for background images to not fade, but it is easy to add in here
+			
+			if bgLayerIsA:
+				get_node("MainGame/BgLayer/BgImage/BgImage_b").texture = load(line['storage'])
+				if 'delay' in line:
+					get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = float(line['delay'])
+					get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play("fade")
+				else:
+					get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = 1
+					get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play("fade")
+				bgLayerIsA = false
+			else:
+				get_node("MainGame/BgLayer/BgImage/BgImage_a").texture = load(line['storage'])
+				if 'delay' in line:
+					get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = float(line['delay'])
+					get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play_backwards("fade")
+				else:
+					get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").playback_speed = 1
+					get_node("MainGame/BgLayer/BgImage/BackgroundImageAnimation").play_backwards("fade")
+					
+				bgLayerIsA = true
+	
+		# This sets the character name in the text box
+		'name':
+			get_node("MainGame/DialogueLayer").show()
+			if line['singleTag'].begins_with('%'):
+				saveOptions['charName'] = '【%s】\n' % languages[configSave['language']]['names'][line['singleTag']]
+			else:
+				saveOptions['charName'] = '【%s】\n' % line['singleTag']
+		
+		# Every 'type' of sound has its own node
+		
+		# This is for short sounds that do not repeat, like a door closing
+		'se':
+			if loadingSave:
+				return
+			$SoundPlayer.stream = load(line['storage'])
+			$SoundPlayer.volume_db = -5
+			$SoundPlayer.play()
+		
+		# This is for repeating background noise, like the buzzing of cicadas
+		'amb':
+			if loadingSave:
+				return
+			if 'singleTag' in line and line['singleTag'] == 'stop':
+				$AmbiencePlayer.stop()
+			else:
+				$AmbiencePlayer.stream = load(line['storage'])
+				$AmbiencePlayer.volume_db = -5
+				$AmbiencePlayer.play()
+		
+		# This is for standard background music
+		# remember looping of music has to be done in the Godot editor under import settings
+		'bgm':
+			if loadingSave:
+				return
+			if 'singleTag' in line:
+				if line['singleTag'] == 'stop':
+					$BgmPlayer.stop()
+			else:
+				$BgmPlayer.stream = load(line['storage'])
+				$BgmPlayer.volume_db = -9
+				$BgmPlayer.play()
+		
+		# A quick way to stop all sounds
+		'allsoundstop':
+			$BgmPlayer.stop()
+			$VoicePlayer.stop()
+			$AmbiencePlayer.stop()
+			$SoundPlayer.stop()
+		
+		# Plays a voice, very similar to 'se'
+		# The voice will stop when the dialogue moves forward
+		'voice':
+			if loadingSave:
+				return
+			$VoicePlayer.stream = load(line['storage'])
+			$VoicePlayer.volume_db = -5
+			$VoicePlayer.play()
+		
+		# Plays a video
+		# Will play overtop of everything(?) and waits for a mouse click to continue
+		# TODO
+		# BUG: If there is no mouse click and the video ends, it will display a blank screen/whatever was behind it before
+		#      and will still wait for a a signal. Will fix once 'video end' signals are implemented in Godot 3.1
+		'video':
+			if loadingSave:
+				return
+			if not line['storage']:
+				print('ERROR: Could not find video file')
+				return
+			get_node("MainGame/DialogueLayer").hide()
+			# stop all other music
+			get_node("BgmPlayer").stop()
+			# $VoicePlayer.stop()
+			get_node("AmbiencePlayer").stop()
+			get_node("SoundPlayer").stop()
+			get_node("VideoPlayer").show()
+			
+			get_node("VideoPlayer").stream = load(line['storage'])
+			get_node("VideoPlayer").volume_db = -5
+			get_node("VideoPlayer").play()
+
+		# sets the dialogue box image, position, and size
+		# This allows to use the same text box and dialogue label for NVL style VNs
+		# It also allows for more customized text boxes and text positioning
+		# TODO: this should have the options 'show' and 'hide' with animations to match.
+		# the tag should also be cleaned up a bit
+		'dialogue':
+			if line['singleTag'] == 'box':
+				var dialogueBox = get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox")
+				dialogueBox.rect_position = Vector2(line['locX'], line['locY'])
+				dialogueBox.rect_size = Vector2(line['sizeX'], line['sizeY'])
+				dialogueBox.texture = load(line['storage'])
+			if line['singleTag'] == 'text':
+				var textBox = get_node("MainGame/DialogueLayer/DialogueNode/DialogueBox/Dialogue")
+				textBox.rect_position = Vector2(line['locX'], line['locY'])
+				textBox.rect_size = Vector2(line['sizeX'], line['sizeY'])
+		
+		# jumps to a jump location
+		'jump':
+			saveOptions['jump'] = line['singleTag']
+			saveOptions['currentLine'] = 0
+			return
+	
+		# another way to end a section
+		# shouldn't be used in most games, but can allow for very specific scenes
+		'sec':
+			pass
+		
+		# this should rarely need to be used directly, only as a fallback or for testing
+		'break':
+			isBreak = true
+	
+		# go through the config file and create the GUI items
+		# this is being done here to make sure they are already created by the time the splashscreen appears
+		# this also makes the config file seperate from the other files
+		'engine':
+			engineVersion = line['version']
+			engineName = line['id']
+	
+		'game':
+			gameVersion = line['version']
+			gameName = line['id']
+	
+		# make... slots for stuff
+		'preload':
+			if line['singleTag'] == 'fg':
+				var numberOfSlots = 14
+				var num = 1
+				while true:
+					# seems to work well
+					var this = load("res://scenes/Sprite.tscn").instance()
+					this.name = "Sprite" + str(num)
+					get_node('MainGame/CharacterLayer').add_child(this)
+					fgSlots[this.name] = true
+					num += 1
+					if num > numberOfSlots:
+						return
+			elif line['singleTag'] == 'buttons':
+				var numberOfSlots = 12
+				var num = 0
+				while true:
+					# seems to work well
+					var thisButton = TextureButton.new()
+					thisButton.name = "Button" + str(num)
+					thisButton.hide()
+					thisButton.expand = true
+					thisButton.STRETCH_KEEP_ASPECT
+					get_node('MainGame/ButtonLayer').add_child(thisButton)
+					num += 1
+					if num > numberOfSlots:
+						return
+			# TODO: sliders are not working yet. They might eventually be made in a new scene for simplicity
+			#  instead of being made like this
+	#		elif line['singleTag'] == 'sliders':
+	#			return
+	#			# disabled for now
+	#			var numberOfSlots = 10
+	#			var num = 0
+	#			print('found sliders')
+	#			while true:
+	#				# seems to work well
+	#				var thisSlider = HSlider.new()
+	#				thisSlider.name = "Slider" + str(num)
+	#				thisSlider.hide()
+	#				thisSlider.editable = true
+	#				thisSlider.tick_count = 100
+	#				thisSlider.ticks_on_borders = true
+	#				print('got this far')
+	#				thisSlider.theme = "MainGameStart"
+	#				get_node('MainGame/ButtonLayer').add_child(thisSlider)
+	#				num += 1
+	#				if num > numberOfSlots:
+	#					print('sliders made')
+	#					return
+				
+			elif line['singleTag'] == 'sound':
+				var names = ['BgmPlayer', 'AmbiencePlayer', 'VoicePlayer', 'SoundPlayer']
+				for name in names:
+					var this = AudioStreamPlayer.new()
+					this.name = name
+					self.add_child(this)
+			elif line['singleTag'] == 'video':
+				var this = VideoPlayer.new()
+				this.name = 'VideoPlayer'
+				# make sure it is fullscreen
+				this.rect_size =  Vector2(1920, 1080)
+				this.hide()
 				self.add_child(this)
-		elif line['singleTag'] == 'video':
-			var this = VideoPlayer.new()
-			this.name = 'VideoPlayer'
-			# make sure it is fullscreen
-			this.rect_size =  Vector2(1920, 1080)
-			this.hide()
-			self.add_child(this)
-		elif line['singleTag'] == 'menu':
-			var this = TextureRect.new()
-			this.rect_position = Vector2(80, 80)
-			this.expand = true
-			this.STRETCH_SCALE_ON_EXPAND
-			this.rect_size = Vector2(1760, 920)
-			this.name = 'MenuImage'
-			this.hide()
-			get_node('MainGame/OptionsLayer').add_child(this)
-			var numberOfSlots = 6
-			var num = 0
-			while true:
-				# seems to work well
-				var thisLabel = Label.new()
-				thisLabel.name = "Label" + str(num)
-				thisLabel.hide()
-				get_node('MainGame/OptionsLayer').add_child(thisLabel)
-				num += 1
-				if num > numberOfSlots:
-					return
-	elif mainTag == 'container':
-		if line['parent'] == 'MainNode':
-			var MainContainer = Container.new()
-			MainContainer.name = line['id']
-			self.add_child(MainContainer)
-		else:
-			var subContainer = Container.new()
-			subContainer.name = line['id']
-			get_node(line['parent']).add_child(subContainer)
-	elif mainTag == 'instantiate':
-		var inst = load("res://scenes/%s.tscn" % line['instance']).instance()
-		get_node(line['parent']).add_child(inst)
+			elif line['singleTag'] == 'menu':
+				var this = TextureRect.new()
+				this.rect_position = Vector2(80, 80)
+				this.expand = true
+				this.STRETCH_SCALE_ON_EXPAND
+				this.rect_size = Vector2(1760, 920)
+				this.name = 'MenuImage'
+				this.hide()
+				get_node('MainGame/OptionsLayer').add_child(this)
+				var numberOfSlots = 6
+				var num = 0
+				while true:
+					# seems to work well
+					var thisLabel = Label.new()
+					thisLabel.name = "Label" + str(num)
+					thisLabel.hide()
+					get_node('MainGame/OptionsLayer').add_child(thisLabel)
+					num += 1
+					if num > numberOfSlots:
+						return
+		
+		'container':
+			if line['parent'] == 'MainNode':
+				var MainContainer = Container.new()
+				MainContainer.name = line['id']
+				self.add_child(MainContainer)
+			else:
+				var subContainer = Container.new()
+				subContainer.name = line['id']
+				get_node(line['parent']).add_child(subContainer)
+		
+		'instantiate':
+			var inst = load("res://scenes/%s.tscn" % line['instance']).instance()
+			get_node(line['parent']).add_child(inst)
+		_:
+			pass
 		
 	return
 
 
-# The parser for all menu tags
+# The interpreter for all menu tags
 func menuInterpreter(menujump):
 	var foundMenu = false
 	var ifTrue = false
