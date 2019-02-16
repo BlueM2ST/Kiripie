@@ -1,6 +1,6 @@
-# SiennaScripter Visual Novel Development Tool v0.9.0 for Godot 3.0.x
+# SiennaScripter Visual Novel Development Tool v0.9.6 for Godot 3.1
 
-Use the power of the Godot Game Engine to make and port Visual Novels and Point-and-Click games!
+Use the power of the Godot Game Engine to make Visual Novels!
 
 # What it does
 
@@ -14,8 +14,7 @@ Feel free to offer suggestions.
 
 # How to set it up
 
-Download and import it as a project in Godot. Some file names may be invalid in the sample scripts 
-(you might not have the files), so please add your own.
+Download and import it as a project in Godot.
 
 You will also need the PCKManager addon/plugin, which can be found here: https://github.com/MrJustreborn/godot_PCKManager or 
 on the Godot AssetLib.
@@ -32,23 +31,38 @@ To run the game, for example, a splashscreen leading to a main menu might look s
 ```
 
 *splashscreen
-
-[menu @@Init]
-[video storage = "logo.webm"]
-
-[img storage = "logoimg.jpg"]
-
-[bgm storage = "01.wav"]
-
-[bgimg storage = "title.png"]
-
+[autoresource]
+[loadingscreen hide]
+[bgimg storage = "logo.webp"]
+[wait 1]
+[bgimg storage="bg_white.webp"]
+[wait 0.6]
+[bgimg storage = "logo2.webp"]
+[wait 1.2]
+[bgimg storage="bg_white.webp"]
+[wait 0.6]
+[bgm storage="bgm01.wav"]
 [menu @@MainMenu]
+[bgimg storage="title01.webp"]
+[wait 3]
 
-[break]
+
+
+[bgimg storage="title01.webp" delay="0.1"]
+[wait 8]
+[bgimg storage="title02.webp" delay="0.1"]
+[wait 8]
+[bgimg storage="title03.webp" delay="0.1"]
+[wait 8]
+[bgimg storage="title04.webp" delay="0.1"]
+[wait 8]
+[jump *splashscreen line="16"]
 
 ```
 
-And the `@@MainMenu` might look like:
+Which will show a normal splashscreen with two logos leading to the main menu which will have a background that loops through different images.
+
+And the `@@MainMenu` menu might look like:
 
 ```
 
@@ -73,8 +87,8 @@ To display a sprite, play a voice file, display a name, and display text, you mi
 
 [fgimg storage = "fg001.webp", slot = "1", pos = "center"]
 [voice storage = "VO010001.wav"]
-[name Yuki]
-Hello, my name is Yuki~~!
+[name Blue]
+Hello, my name is Blue!
 
 ```
 
@@ -95,7 +109,7 @@ Sure, there is a dialogue tag that lets you set the text to display wherever on 
 
 # Can I make a point-and-click game using this tool?
 
-Sure, but it may not be as simple as other tools. Using the menu system shown above, you can specify transparent (or with an image) 
+Sure, but it will not be as simple as other tools. Using the menu system shown above, you can specify transparent (or with an image) 
 buttons for each scene and code them using a separate script (scripts.kps) like:
 
 ```
@@ -143,8 +157,7 @@ It uses GDScript, but it is in a separate file for easier editing. With this sys
 
 # What about having my game translated?
 
-Sure, the tool has localization support, but it requires a bit of setup. It uses a json file (called *.lang) to store the dialogue, 
-but both languages must use it if you want two or more languages to run on the same build.
+Sure, the tool has localization support, but it requires a bit of setup. It uses a json file (called *.lang file in the tool) to store the dialogue, but both languages must use it if you want two or more languages to run on the same build.
 
 ```
 
@@ -223,28 +236,21 @@ Currently, Godot is hit-and-miss when it comes to playing video files. I've play
 I haven't had much luck with WEBM either. In short, it depends on how the video is encoded and what version it's using (as far as I know). 
 This should be fixed with Godot 3.1.
 
-# How efficient is the tool when playing games?
-
-It runs pretty well overall, but it hasn't been extensively tested. 
-This version (0.9.0) does suffer from fps drops (see 'known major bugs' below), but it should be fixed for version 1.0.
-
-
 # What's left to add for version 1.0?
 
-These are the features to add for version 1.0. Some features will require Godot 3.1 to implement, so it might take longer for some of them than others.
+These are the features to add for version 1.0
 
-- Dialogue with support for tags within the lines (ex. italics) (may not make it for version 1.0)
+- Dialogue with support for tags within the lines (ex. italics)
 - Sprite fade-out
 - Sprite sliding movements
-- Support for 4:3 aspect ratios (may not make it for version 1.0)
-- Patches similar to Kirikiri
-- GUI sliders (may not make it for version 1.0)
+- Support for 4:3 aspect ratios
+- Seperate patch files (as opposed to Godot patch files)
+- GUI sliders
 
 
 # Known major bugs in this version
 
-- While saving works, loading will only work (properly) if the game is running through the editor.
-- The dialogue() function causes some slowdowns if the dialogue progresses too quickly (like during skip).
+- While saving works, loading does not currently work.
 - The script debugger is currently not working for this version. Please do not enable it.
 
 
