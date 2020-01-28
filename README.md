@@ -17,21 +17,27 @@ Instead, you can simply add the SiennaScripter scene to your game and remove it 
 # FAQ
 
 *Q.* Can I make a NVL game using this tool?
+
 *A.* Yes, there are tags to support this.
 
 *Q.* Is there translation support?
+
 *A.* Yes, you can have multiple languages in your game.
 
 *Q.* Is the scripting system easy to use?
+
 *A.* If you are familiar with Kirikiri or Ren'py, you should have no issues with it.
 
 *Q.* What platforms can I export to?
+
 *A.* Any platform supported by Godot (ex. Windows, Mac, Linux, Android, IOS)
 
 *Q.* Can I extend the scripting systems functionality?
+
 *A.* Yes, it is entirely implemented in GDScript and is simple to modify.
 
 *Q.* Will VisualScript or C# be supported?
+
 *A.* Probably not.
 
 
